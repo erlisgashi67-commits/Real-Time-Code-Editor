@@ -33,11 +33,10 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   })
 }
 
-/** Claim a share link: register the current user as a collaborator. */
+/** Claim a share link: register the current (cookie-authed) user as a collaborator. */
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { token } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
 
   const link = await db.shareLink.findUnique({ where: { token } })

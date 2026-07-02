@@ -68,7 +68,7 @@ export function SidePanel(props: Props) {
 
 function ChatTab({ user, messages, onSendChat }: Props) {
   const [text, setText] = useState('')
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollArea>>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -83,7 +83,7 @@ function ChatTab({ user, messages, onSendChat }: Props) {
 
   return (
     <div className="h-full flex flex-col">
-      <ScrollArea className="flex-1" ref={scrollRef as any}>
+      <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="p-3 space-y-3 max-h-full">
           {messages.length === 0 && (
             <div className="text-center text-slate-500 text-xs py-8">

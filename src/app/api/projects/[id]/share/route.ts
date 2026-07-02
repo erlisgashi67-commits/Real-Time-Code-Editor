@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { json, error, requireUser, getAccess, isAdmin } from '@/lib/access'
 import { nanoid } from 'nanoid'
+import { createShareLinkSchema, validate } from '@/lib/validations'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,8 +10,7 @@ type Ctx = { params: Promise<{ id: string }> }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
@@ -25,22 +25,16 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can create share links')
 
   const body = await req.json().catch(() => ({}))
-  const { permission: linkPermission = 'WRITE', expiresAt } = body as {
-    permission?: string
-    expiresAt?: string
-  }
-
-  if (!['READ', 'WRITE'].includes(linkPermission)) {
-    return error(400, 'permission must be READ or WRITE')
-  }
+  const parsed = validate(createShareLinkSchema, body)
+  if ('error' in parsed) return parsed.error
+  const { permission: linkPermission, expiresAt } = parsed.data
 
   const link = await db.shareLink.create({
     data: {
@@ -55,8 +49,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')

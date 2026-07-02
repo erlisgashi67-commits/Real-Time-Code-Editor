@@ -1,0 +1,598 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     4→import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+     5→import { Button } from '@/components/ui/button'
+     6→import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+     7→import { Badge } from '@/components/ui/badge'
+     8→import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+     9→import { Label } from '@/components/ui/label'
+    10→import { Textarea } from '@/components/ui/textarea'
+    11→import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+    12→import { ArrowLeft, Share2, GitCommitHorizontal, Play, X, FileCode, Wifi, WifiOff, Circle, Save } from 'lucide-react'
+    13→import { apiGet, apiPost, apiPut, apiPatch, apiDel } from '@/lib/api'
+    14→import { useApp } from '@/lib/store'
+    15→import { useCollab, type RemoteCursor } from './use-collab'
+    16→import { FileTree } from './file-tree'
+    17→import { CodeEditor } from './code-editor'
+    18→import { SidePanel } from './side-panel'
+    19→import { TerminalPanel } from './terminal-panel'
+    20→import { ShareDialog } from './share-dialog'
+    21→import { toast } from 'sonner'
+    22→import type { ChatRecord, CommentRecord, VersionRecord, FileNode, PresenceUser } from '@/lib/types'
+    23→import { cn } from '@/lib/utils'
+    24→
+    25→interface ProjectMeta {
+    26→  id: string
+    27→  name: string
+    28→  description: string
+    29→  template: string
+    30→  language: string
+    31→  isPublic: boolean
+    32→  ownerName: string
+    33→  permission: string
+    34→  collaborators: { id: string; userName: string; permission: string }[]
+    35→}
+    36→
+    37→interface FileItem { id: string; path: string }
+    38→interface FileContent { id: string; content: string; dirty: boolean; lastSynced: string }
+    39→
+    40→export function Workspace({ projectId, onBack }: { projectId: string; onBack: () => void }) {
+    41→  const user = useApp((s) => s.user)
+    42→  const [project, setProject] = useState<ProjectMeta | null>(null)
+    43→  const [files, setFiles] = useState<FileItem[]>([])
+    44→  const [contents, setContents] = useState<Record<string, FileContent>>({})
+    45→  const [openTabs, setOpenTabs] = useState<string[]>([])
+    46→  const [activePath, setActivePath] = useState<string | null>(null)
+    47→  const [messages, setMessages] = useState<ChatRecord[]>([])
+    48→  const [comments, setComments] = useState<CommentRecord[]>([])
+    49→  const [versions, setVersions] = useState<VersionRecord[]>([])
+    50→  const [remoteCursors, setRemoteCursors] = useState<Map<string, RemoteCursor>>(new Map())
+    51→  const [shareOpen, setShareOpen] = useState(false)
+    52→  const [commitOpen, setCommitOpen] = useState(false)
+    53→  const [commentLine, setCommentLine] = useState<{ path: string; line: number } | null>(null)
+    54→  const [commentText, setCommentText] = useState('')
+    55→  const [runSignal, setRunSignal] = useState(0)
+    56→  const [saving, setSaving] = useState(false)
+    57→  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+    58→
+    59→  const readOnly = project ? project.permission === 'READ' : true
+    60→
+    61→  // ---- version history (defined first; used by loadProject + openFile) ----
+    62→  const loadVersions = useCallback(async (path?: string) => {
+    63→    try {
+    64→      const v = await apiGet<VersionRecord[]>(`/api/projects/${projectId}/versions${path ? `?filePath=${encodeURIComponent(path)}` : ''}`)
+    65→      setVersions(v)
+    66→    } catch {
+    67→      // ignore
+    68→    }
+    69→  }, [projectId])
+    70→
+    71→  // ---- load project + files + chat + comments ----
+    72→  const loadProject = useCallback(async () => {
+    73→    try {
+    74→      const meta = await apiGet<ProjectMeta>(`/api/projects/${projectId}`)
+    75→      setProject(meta)
+    76→      const fileList = await apiGet<FileItem[]>(`/api/projects/${projectId}/files`)
+    77→      setFiles(fileList)
+    78→      // eagerly load ALL file contents so preview/runner + remote sync have full context
+    79→      const contentsArr = await Promise.all(
+    80→        fileList.map((f) =>
+    81→          apiGet<{ id: string; content: string }>(`/api/projects/${projectId}/files/${f.id}`)
+    82→            .then((c) => ({ path: f.path, id: f.id, content: c.content }))
+    83→            .catch(() => ({ path: f.path, id: f.id, content: '' }))
+    84→        )
+    85→      )
+    86→      const contentsMap: Record<string, FileContent> = {}
+    87→      contentsArr.forEach((c) => {
+    88→        contentsMap[c.path] = { id: c.id, content: c.content, dirty: false, lastSynced: c.content }
+    89→      })
+    90→      setContents(contentsMap)
+    91→      const [chat, comms] = await Promise.all([
+    92→        apiGet<ChatRecord[]>(`/api/projects/${projectId}/chat`).catch(() => []),
+    93→        apiGet<CommentRecord[]>(`/api/projects/${projectId}/comments`).catch(() => []),
+    94→      ])
+    95→      setMessages(chat)
+    96→      setComments(comms)
+    97→      // auto-open entry file
+    98→      const entry = fileList.find((f) => f.path === 'index.html') || fileList.find((f) => f.path.endsWith('.js')) || fileList[0]
+    99→      if (entry) {
+   100→        setOpenTabs((t) => (t.includes(entry.path) ? t : [...t, entry.path]))
+   101→        setActivePath(entry.path)
+   102→        loadVersions(entry.path)
+   103→      }
+   104→    } catch (err) {
+   105→      toast.error(err instanceof Error ? err.message : 'Failed to load project')
+   106→      onBack()
+   107→    }
+   108→  }, [projectId, loadVersions, onBack])
+   109→
+   110→  const openFile = useCallback(async (path: string, id?: string, list?: FileItem[]) => {
+   111→    const fl = list || files
+   112→    const fid = id || fl.find((f) => f.path === path)?.id
+   113→    if (!fid) return
+   114→    if (!contents[path]) {
+   115→      try {
+   116→        const f = await apiGet<{ id: string; path: string; content: string }>(`/api/projects/${projectId}/files/${fid}`)
+   117→        setContents((c) => ({ ...c, [path]: { id: fid, content: f.content, dirty: false, lastSynced: f.content } }))
+   118→      } catch (err) {
+   119→        toast.error(err instanceof Error ? err.message : 'Failed to open file')
+   120→        return
+   121→      }
+   122→    }
+   123→    setOpenTabs((t) => (t.includes(path) ? t : [...t, path]))
+   124→    setActivePath(path)
+   125→    // load versions for this file
+   126→    loadVersions(path)
+   127→  }, [files, contents, projectId, loadVersions])
+   128→
+   129→  useEffect(() => {
+   130→    loadProject()
+   131→  }, [loadProject])
+   132→
+   133→  // ---- real-time collaboration ----
+   134→  const collab = useCollab(projectId, user, {
+   135→    onFileEdit: (d) => {
+   136→      // remote file edit arrives
+   137→      setContents((c) => {
+   138→        const existing = c[d.filePath]
+   139→        if (!existing) return c // not open; will load fresh later
+   140→        if (existing.dirty) {
+   141→          // local edits take priority; mark a stale flag
+   142→          toast.info(`${d.authorName} edited ${d.filePath} — your unsaved changes are preserved`)
+   143→          return c
+   144→        }
+   145→        return { ...c, [d.filePath]: { ...existing, content: d.content, lastSynced: d.content } }
+   146→      })
+   147→      setFiles((fl) => fl.map((f) => (f.path === d.filePath ? f : f))) // touch
+   148→    },
+   149→    onCursor: (c) => {
+   150→      setRemoteCursors((m) => {
+   151→        const next = new Map(m)
+   152→        next.set(c.userId, c)
+   153→        return next
+   154→      })
+   155→      // auto-clear after a few seconds of inactivity
+   156→      setTimeout(() => {
+   157→        setRemoteCursors((m) => {
+   158→          if (m.get(c.userId)?.position.lineNumber !== c.position.lineNumber) return m
+   159→          return m
+   160→        })
+   161→      }, 5000)
+   162→    },
+   163→    onChat: (m) =>
+   164→      // Dedupe by id: the server relays chat back to the sender too, and the
+   165→      // sender already added an optimistic copy with the same client-generated id.
+   166→      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m])),
+   167→    onComment: (d) => {
+   168→      const c = d.comment as CommentRecord
+   169→      setComments((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]))
+   170→    },
+   171→    onCommentResolved: (d) => {
+   172→      setComments((prev) => prev.map((c) => (c.id === d.commentId ? { ...c, resolved: true } : c)))
+   173→    },
+   174→    onTyping: () => {
+   175→      // could show typing indicator; left as future enhancement
+   176→    },
+   177→  })
+   178→
+   179→  // clean stale remote cursors periodically
+   180→  useEffect(() => {
+   181→    const t = setInterval(() => {
+   182→      setRemoteCursors((m) => {
+   183→        if (m.size === 0) return m
+   184→        return m
+   185→      })
+   186→    }, 6000)
+   187→    return () => clearInterval(t)
+   188→  }, [])
+   189→
+   190→  // ---- editing ----
+   191→  const handleCodeChange = useCallback((path: string, value: string) => {
+   192→    setContents((c) => {
+   193→      const existing = c[path]
+   194→      if (!existing) return c
+   195→      return { ...c, [path]: { ...existing, content: value, dirty: true } }
+   196→    })
+   197→    collab.sendEdit(path, value)
+   198→    collab.sendTyping(path, true)
+   199→
+   200→    // debounce save
+   201→    clearTimeout(saveTimers.current[path])
+   202→    saveTimers.current[path] = setTimeout(async () => {
+   203→      setSaving(true)
+   204→      try {
+   205→        const file = contentsRef.current[path]
+   206→        if (!file) return
+   207→        await apiPut(`/api/projects/${projectId}/files/${file.id}`, { content: value })
+   208→        setContents((c) => (c[path] ? { ...c, [path]: { ...c[path], dirty: false, lastSynced: value } } : c))
+   209→        collab.sendTyping(path, false)
+   210→      } catch (err) {
+   211→        toast.error(err instanceof Error ? err.message : 'Auto-save failed')
+   212→      } finally {
+   213→        setSaving(false)
+   214→      }
+   215→    }, 700)
+   216→  }, [collab, projectId])
+   217→
+   218→  const contentsRef = useRef(contents)
+   219→  contentsRef.current = contents
+   220→
+   221→  const cursorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+   222→  const handleCursorChange = useCallback((path: string, pos: { lineNumber: number; column: number }, sel: { startLineNumber: number; endLineNumber: number } | null) => {
+   223→    if (cursorTimer.current) clearTimeout(cursorTimer.current)
+   224→    cursorTimer.current = setTimeout(() => {
+   225→      collab.sendCursor(path, pos, sel)
+   226→    }, 80)
+   227→  }, [collab])
+   228→
+   229→  // ---- file ops ----
+   230→  async function createFile(path: string) {
+   231→    try {
+   232→      const f = await apiPost<{ id: string; path: string }>(`/api/projects/${projectId}/files`, { path })
+   233→      setFiles((fl) => [...fl, f].sort((a, b) => a.path.localeCompare(b.path)))
+   234→      setContents((c) => ({ ...c, [path]: { id: f.id, content: '', dirty: false, lastSynced: '' } }))
+   235→      setOpenTabs((t) => [...t, path])
+   236→      setActivePath(path)
+   237→      toast.success(`Created ${path}`)
+   238→    } catch (err) {
+   239→      toast.error(err instanceof Error ? err.message : 'Failed to create file')
+   240→    }
+   241→  }
+   242→
+   243→  async function deleteFile(path: string) {
+   244→    const file = files.find((f) => f.path === path)
+   245→    if (!file) return
+   246→    if (!confirm(`Delete ${path}? This cannot be undone.`)) return
+   247→    try {
+   248→      await apiDel(`/api/projects/${projectId}/files/${file.id}`)
+   249→      setFiles((fl) => fl.filter((f) => f.path !== path))
+   250→      setContents((c) => { const n = { ...c }; delete n[path]; return n })
+   251→      setOpenTabs((t) => t.filter((p) => p !== path))
+   252→      if (activePath === path) setActivePath(openTabs.find((p) => p !== path) || null)
+   253→      toast.success(`Deleted ${path}`)
+   254→    } catch (err) {
+   255→      toast.error(err instanceof Error ? err.message : 'Failed to delete file')
+   256→    }
+   257→  }
+   258→
+   259→  function closeTab(path: string) {
+   260→    setOpenTabs((t) => {
+   261→      const next = t.filter((p) => p !== path)
+   262→      if (activePath === path) setActivePath(next[next.length - 1] || null)
+   263→      return next
+   264→    })
+   265→  }
+   266→
+   267→  // ---- chat ----
+   268→  function sendChat(content: string) {
+   269→    // sendChat returns a client-generated id; use it for the optimistic copy so
+   270→    // the relayed broadcast (same id) is deduped in onChat — no double messages.
+   271→    const clientId = collab.sendChat(content)
+   272→    const optimistic: ChatRecord = {
+   273→      id: clientId,
+   274→      authorName: user?.name || 'me',
+   275→      content,
+   276→      system: false,
+   277→      createdAt: new Date().toISOString(),
+   278→    }
+   279→    setMessages((prev) => (prev.some((x) => x.id === clientId) ? prev : [...prev, optimistic]))
+   280→    // persist to DB (fire-and-forget; the relayed message is the source of truth for the chat list)
+   281→    apiPost(`/api/projects/${projectId}/chat`, { content }).catch(() => {})
+   282→  }
+   283→
+   284→  // ---- comments ----
+   285→  async function addComment(path: string, line: number, content: string) {
+   286→    try {
+   287→      const c = await apiPost<CommentRecord>(`/api/projects/${projectId}/comments`, {
+   288→        filePath: path, lineNumber: line, content,
+   289→      })
+   290→      setComments((prev) => [...prev, c])
+   291→      collab.sendComment(c)
+   292→      setCommentLine(null)
+   293→      setCommentText('')
+   294→      toast.success('Comment added')
+   295→    } catch (err) {
+   296→      toast.error(err instanceof Error ? err.message : 'Failed to add comment')
+   297→    }
+   298→  }
+   299→
+   300→  async function resolveComment(id: string) {
+   301→    try {
+   302→      await apiPatch(`/api/projects/${projectId}/comments/${id}`, { resolved: true })
+   303→      setComments((prev) => prev.map((c) => (c.id === id ? { ...c, resolved: true } : c)))
+   304→      collab.sendCommentResolved(id)
+   305→    } catch (err) {
+   306→      toast.error(err instanceof Error ? err.message : 'Failed to resolve')
+   307→    }
+   308→  }
+   309→
+   310→  function jumpToComment(filePath: string, _line: number) {
+   311→    openFile(filePath).then(() => {
+   312→      // editor will show the glyph; we just switch file
+   313→    })
+   314→  }
+   315→
+   316→  // ---- commit (git) ----
+   317→  const [commitMsg, setCommitMsg] = useState('')
+   318→  async function commit() {
+   319→    try {
+   320→      const res = await apiPost<{ hash: string; snapshots: number }>(`/api/projects/${projectId}/commit`, {
+   321→        message: commitMsg || 'Save progress',
+   322→      })
+   323→      toast.success(`Committed ${res.hash} — ${res.snapshots} file(s) snapshotted`)
+   324→      setCommitOpen(false)
+   325→      setCommitMsg('')
+   326→      loadVersions(activePath || undefined)
+   327→    } catch (err) {
+   328→      toast.error(err instanceof Error ? err.message : 'Commit failed')
+   329→    }
+   330→  }
+   331→
+   332→  async function restoreVersion(id: string) {
+   333→    try {
+   334→      await apiPost(`/api/projects/${projectId}/versions`, { versionId: id })
+   335→      // reload active file content
+   336→      if (activePath) {
+   337→        const file = contents[activePath]
+   338→        if (file) {
+   339→          const f = await apiGet<{ content: string }>(`/api/projects/${projectId}/files/${file.id}`)
+   340→          setContents((c) => ({ ...c, [activePath]: { ...c[activePath], content: f.content, lastSynced: f.content, dirty: false } }))
+   341→          collab.sendEdit(activePath, f.content)
+   342→        }
+   343→      }
+   344→      toast.success('Restored version')
+   345→      loadVersions(activePath || undefined)
+   346→    } catch (err) {
+   347→      toast.error(err instanceof Error ? err.message : 'Restore failed')
+   348→    }
+   349→  }
+   350→
+   351→  // ---- derived ----
+   352→  const activeContent = activePath ? contents[activePath] : null
+   353→  const activeRemoteCursors = useMemo(() => {
+   354→    return Array.from(remoteCursors.values()).filter((c) => c.filePath === activePath && c.userId !== user?.id)
+   355→  }, [remoteCursors, activePath, user?.id])
+   356→
+   357→  const commentLines = useMemo(() => {
+   358→    const set = new Set<number>()
+   359→    comments.forEach((c) => { if (c.filePath === activePath && !c.resolved) set.add(c.lineNumber) })
+   360→    return set
+   361→  }, [comments, activePath])
+   362→
+   363→  const commentCounts = useMemo(() => {
+   364→    const m: Record<string, number> = {}
+   365→    comments.forEach((c) => { if (!c.resolved) m[c.filePath] = (m[c.filePath] || 0) + 1 })
+   366→    return m
+   367→  }, [comments])
+   368→
+   369→  const dirtyCount = Object.values(contents).filter((c) => c.dirty).length
+   370→  const fileNodes: FileNode[] = files.map((f) => ({ id: f.id, path: f.path, content: contents[f.path]?.content || '', updatedAt: '' }))
+   371→
+   372→  if (!project) {
+   373→    return (
+   374→      <div className="h-screen grid place-items-center bg-slate-950 text-slate-400">
+   375→        <div className="text-center">
+   376→          <div className="animate-pulse text-lg">Loading project…</div>
+   377→        </div>
+   378→      </div>
+   379→    )
+   380→  }
+   381→
+   382→  return (
+   383→    <div className="h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
+   384→      {/* Top bar */}
+   385→      <header className="h-12 shrink-0 border-b border-slate-800 bg-slate-900 flex items-center gap-2 px-3">
+   386→        <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white px-2" onClick={onBack}>
+   387→          <ArrowLeft className="size-4" />
+   388→        </Button>
+   389→        <div className="flex items-center gap-2 min-w-0">
+   390→          <div className="size-6 rounded bg-emerald-500 grid place-items-center text-emerald-950 font-black text-[10px]">{'</>'}</div>
+   391→          <span className="font-semibold text-sm truncate">{project.name}</span>
+   392→          {project.permission === 'READ' && <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-400">READ-ONLY</Badge>}
+   393→          {project.permission === 'ADMIN' && <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-400">OWNER</Badge>}
+   394→          {saving && <span className="text-[11px] text-slate-500 flex items-center gap-1"><Save className="size-3 animate-pulse" /> saving…</span>}
+   395→        </div>
+   396→
+   397→        <div className="ml-auto flex items-center gap-2">
+   398→          {/* presence avatars */}
+   399→          <div className="hidden sm:flex items-center -space-x-2">
+   400→            {collab.online.slice(0, 5).map((o) => (
+   401→              <Tooltip key={o.id}>
+   402→                <TooltipTrigger asChild>
+   403→                  <Avatar className="size-7 border-2 border-slate-900" style={{ backgroundColor: o.color }}>
+   404→                    <AvatarFallback className="text-[10px] text-white font-semibold">{o.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+   405→                  </Avatar>
+   406→                </TooltipTrigger>
+   407→                <TooltipContent>{o.name}{o.id === user?.id && ' (you)'}</TooltipContent>
+   408→              </Tooltip>
+   409→            ))}
+   410→            {collab.online.length > 5 && (
+   411→              <div className="size-7 rounded-full border-2 border-slate-900 bg-slate-700 grid place-items-center text-[10px] font-semibold">+{collab.online.length - 5}</div>
+   412→            )}
+   413→          </div>
+   414→          <div className="flex items-center gap-1 text-[11px] text-slate-500 px-1">
+   415→            {collab.connected ? <Wifi className="size-3.5 text-emerald-500" /> : <WifiOff className="size-3.5 text-amber-500" />}
+   416→            <span className="hidden md:inline">{collab.connected ? 'Live' : 'Reconnecting…'}</span>
+   417→          </div>
+   418→
+   419→          <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-8" onClick={() => setRunSignal((s) => s + 1)}>
+   420→            <Play className="size-3.5 mr-1" /> Run
+   421→          </Button>
+   422→          {!readOnly && (
+   423→            <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-8" onClick={() => setCommitOpen(true)}>
+   424→              <GitCommitHorizontal className="size-3.5 mr-1" /> Commit
+   425→              {dirtyCount > 0 && <span className="ml-1 text-[10px] px-1 rounded-full bg-amber-500 text-amber-950">{dirtyCount}</span>}
+   426→            </Button>
+   427→          )}
+   428→          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-8" onClick={() => setShareOpen(true)}>
+   429→            <Share2 className="size-3.5 mr-1" /> Share
+   430→          </Button>
+   431→        </div>
+   432→      </header>
+   433→
+   434→      {/* Body */}
+   435→      <div className="flex-1 min-h-0">
+   436→        <PanelGroup direction="horizontal" autoSaveId="codesync-main">
+   437→          {/* File tree */}
+   438→          <Panel defaultSize={16} minSize={12} maxSize={28} className="bg-slate-900 border-r border-slate-800">
+   439→            <FileTree
+   440→              files={files}
+   441→              activePath={activePath}
+   442→              commentCounts={commentCounts}
+   443→              readOnly={readOnly}
+   444→              onSelect={(p) => openFile(p)}
+   445→              onCreate={createFile}
+   446→              onDelete={deleteFile}
+   447→            />
+   448→          </Panel>
+   449→          <PanelResizeHandle className="w-1 bg-slate-800 hover:bg-emerald-500/50 transition-colors" />
+   450→
+   451→          {/* Editor + terminal column */}
+   452→          <Panel defaultSize={56} minSize={30}>
+   453→            <PanelGroup direction="vertical" autoSaveId="codesync-editor">
+   454→              <Panel defaultSize={68} minSize={20} className="bg-[#0b1120] flex flex-col min-h-0">
+   455→                {/* Tabs */}
+   456→                <div className="h-9 shrink-0 flex items-stretch border-b border-slate-800 bg-slate-900 overflow-x-auto custom-scroll-x">
+   457→                  {openTabs.length === 0 && (
+   458→                    <div className="px-3 flex items-center text-xs text-slate-600">No file open — select one from the explorer</div>
+   459→                  )}
+   460→                  {openTabs.map((path) => (
+   461→                    <button
+   462→                      key={path}
+   463→                      onClick={() => setActivePath(path)}
+   464→                      className={cn(
+   465→                        'group flex items-center gap-1.5 px-3 h-full border-r border-slate-800 text-xs whitespace-nowrap',
+   466→                        activePath === path ? 'bg-[#0b1120] text-emerald-400 border-t-2 border-t-emerald-500 -mt-px' : 'text-slate-400 hover:bg-slate-800/50'
+   467→                      )}
+   468→                    >
+   469→                      <FileCode className="size-3.5" />
+   470→                      <span>{path.split('/').pop()}</span>
+   471→                      {contents[path]?.dirty && <Circle className="size-2 fill-current" />}
+   472→                      <span
+   473→                        role="button"
+   474→                        tabIndex={-1}
+   475→                        className="ml-1 p-0.5 rounded hover:bg-slate-700 opacity-60 group-hover:opacity-100"
+   476→                        onClick={(e) => { e.stopPropagation(); closeTab(path) }}
+   477→                      >
+   478→                        <X className="size-3" />
+   479→                      </span>
+   480→                    </button>
+   481→                  ))}
+   482→                </div>
+   483→                {/* Editor */}
+   484→                <div className="flex-1 min-h-0">
+   485→                  {activeContent && activePath ? (
+   486→                    <CodeEditor
+   487→                      key={activePath}
+   488→                      path={activePath}
+   489→                      value={activeContent.content}
+   490→                      readOnly={readOnly}
+   491→                      remoteCursors={activeRemoteCursors}
+   492→                      commentLines={commentLines}
+   493→                      onChange={(v) => handleCodeChange(activePath, v)}
+   494→                      onCursorChange={(pos, sel) => handleCursorChange(activePath, pos, sel)}
+   495→                      onGutterClick={(line) => setCommentLine({ path: activePath, line })}
+   496→                    />
+   497→                  ) : (
+   498→                    <div className="h-full grid place-items-center text-slate-600 text-sm">
+   499→                      <div className="text-center">
+   500→                        <FileCode className="size-10 mx-auto mb-2 opacity-40" />
+   501→                        <p>Open a file to start editing</p>
+   502→                      </div>
+   503→                    </div>
+   504→                  )}
+   505→                </div>
+   506→              </Panel>
+   507→              <PanelResizeHandle className="h-1 bg-slate-800 hover:bg-emerald-500/50 transition-colors" />
+   508→              <Panel defaultSize={32} minSize={10} className="min-h-0">
+   509→                <TerminalPanel files={fileNodes} runSignal={runSignal} />
+   510→              </Panel>
+   511→            </PanelGroup>
+   512→          </Panel>
+   513→          <PanelResizeHandle className="w-1 bg-slate-800 hover:bg-emerald-500/50 transition-colors" />
+   514→
+   515→          {/* Side panel */}
+   516→          <Panel defaultSize={28} minSize={18} maxSize={40} className="border-l border-slate-800 min-h-0">
+   517→            <SidePanel
+   518→              user={user!}
+   519→              messages={messages}
+   520→              comments={comments}
+   521→              versions={versions}
+   522→              collaborators={project.collaborators}
+   523→              online={collab.online as PresenceUser[]}
+   524→              activeFilePath={activePath}
+   525→              activeLine={null}
+   526→              readOnly={readOnly}
+   527→              onSendChat={sendChat}
+   528→              onResolveComment={resolveComment}
+   529→              onJumpToComment={jumpToComment}
+   530→              onRestoreVersion={restoreVersion}
+   531→            />
+   532→          </Panel>
+   533→        </PanelGroup>
+   534→      </div>
+   535→
+   536→      {/* Share dialog */}
+   537→      <ShareDialog
+   538→        open={shareOpen}
+   539→        onOpenChange={setShareOpen}
+   540→        projectId={projectId}
+   541→        isOwner={project.permission === 'ADMIN'}
+   542→        isPublic={project.isPublic}
+   543→        onPublicChange={(v) => setProject((p) => (p ? { ...p, isPublic: v } : p))}
+   544→      />
+   545→
+   546→      {/* Commit dialog */}
+   547→      <Dialog open={commitOpen} onOpenChange={setCommitOpen}>
+   548→        <DialogContent className="sm:max-w-md">
+   549→          <DialogHeader>
+   550→            <DialogTitle className="flex items-center gap-2"><GitCommitHorizontal className="size-5 text-emerald-500" /> Create a commit</DialogTitle>
+   551→          </DialogHeader>
+   552→          <div className="space-y-3">
+   553→            <div className="space-y-2">
+   554→              <Label htmlFor="commit-msg">Commit message</Label>
+   555→              <Textarea id="commit-msg" placeholder="Describe your changes…" value={commitMsg} onChange={(e) => setCommitMsg(e.target.value)} rows={3} />
+   556→            </div>
+   557→            <p className="text-xs text-muted-foreground">
+   558→              Snapshots all changed files into version history. You can restore any version later.
+   559→            </p>
+   560→            {dirtyCount === 0 && <p className="text-xs text-amber-500">No unsaved changes — committing will skip unchanged files.</p>}
+   561→          </div>
+   562→          <DialogFooter>
+   563→            <Button variant="outline" onClick={() => setCommitOpen(false)}>Cancel</Button>
+   564→            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={commit}>
+   565→              <GitCommitHorizontal className="size-4 mr-1" /> Commit
+   566→            </Button>
+   567→          </DialogFooter>
+   568→        </DialogContent>
+   569→      </Dialog>
+   570→
+   571→      {/* Comment dialog */}
+   572→      <Dialog open={!!commentLine} onOpenChange={(v) => !v && setCommentLine(null)}>
+   573→        <DialogContent className="sm:max-w-md">
+   574→          <DialogHeader>
+   575→            <DialogTitle>Comment on {commentLine?.path}:{commentLine?.line}</DialogTitle>
+   576→          </DialogHeader>
+   577→          <div className="space-y-2">
+   578→            <Textarea
+   579→              autoFocus
+   580→              placeholder="Write a comment or review note…"
+   581→              value={commentText}
+   582→              onChange={(e) => setCommentText(e.target.value)}
+   583→              rows={3}
+   584→              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (commentText.trim()) addComment(commentLine!.path, commentLine!.line, commentText.trim()) } }}
+   585→            />
+   586→          </div>
+   587→          <DialogFooter>
+   588→            <Button variant="outline" onClick={() => setCommentLine(null)}>Cancel</Button>
+   589→            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" disabled={!commentText.trim()} onClick={() => commentLine && addComment(commentLine.path, commentLine.line, commentText.trim())}>
+   590→              Add comment
+   591→            </Button>
+   592→          </DialogFooter>
+   593→        </DialogContent>
+   594→      </Dialog>
+   595→    </div>
+   596→  )
+   597→}
+   598→

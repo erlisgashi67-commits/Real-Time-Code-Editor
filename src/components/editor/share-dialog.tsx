@@ -9,9 +9,8 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Copy, Check, Link2, Plus, Trash2, Users, Globe, Lock } from 'lucide-react'
-import { apiGet, apiPost, apiDel } from '@/lib/api'
+import { apiGet, apiPost, apiPatch, apiDel } from '@/lib/api'
 import { toast } from 'sonner'
-import { format } from 'date-fns'
 
 interface ShareLink { id: string; token: string; permission: string; createdAt: string; expiresAt: string | null }
 interface Collaborator { id: string; userName: string; permission: string }
@@ -119,7 +118,7 @@ export function ShareDialog({
 
   async function togglePublic(v: boolean) {
     try {
-      await apiPut(`/api/projects/${projectId}`, { isPublic: v })
+      await apiPatch(`/api/projects/${projectId}`, { isPublic: v })
       onPublicChange(v)
       toast.success(v ? 'Project is now public (read-only)' : 'Project is private')
     } catch (err) {

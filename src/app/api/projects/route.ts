@@ -1,15 +1,15 @@
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { json, error, requireUser } from '@/lib/access'
+import { json, requireUser } from '@/lib/access'
 import { getTemplate } from '@/lib/templates'
 import { nanoid } from 'nanoid'
+import { createProjectSchema, validate } from '@/lib/validations'
 
 export const dynamic = 'force-dynamic'
 
 /** List projects owned by or collaborated on by the current user. */
 export async function GET(req: NextRequest) {
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
 
   const [owned, collabs] = await Promise.all([
@@ -49,17 +49,13 @@ export async function GET(req: NextRequest) {
 
 /** Create a new project from a template. */
 export async function POST(req: NextRequest) {
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
 
   const body = await req.json().catch(() => ({}))
-  const { name, description, templateId } = body as {
-    name?: string
-    description?: string
-    templateId?: string
-  }
-  if (!name) return error(400, 'name is required')
+  const parsed = validate(createProjectSchema, body)
+  if ('error' in parsed) return parsed.error
+  const { name, description, templateId } = parsed.data
 
   const template = getTemplate(templateId || 'blank')
   const project = await db.project.create({
@@ -76,7 +72,6 @@ export async function POST(req: NextRequest) {
     include: { files: true },
   })
 
-  // record initial commit
   for (const file of project.files) {
     await db.version.create({
       data: {

@@ -1,33 +1,32 @@
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { json, error } from '@/lib/access'
-import { randomColor } from '@/lib/session'
+import { jsonWithCookie, sessionCookieHeader, error } from '@/lib/access'
 import { getTemplate } from '@/lib/templates'
 import { nanoid } from 'nanoid'
+import { signInSchema } from '@/lib/validations'
 
 export const dynamic = 'force-dynamic'
 
-/** Sign in / register: create-or-get a user by email. New users get a starter project. */
+/** Sign in / register: create-or-get a user by email, then set a signed
+ *  httpOnly session cookie. The client never sees or controls the cookie. */
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
-  const { name, email } = body as { name?: string; email?: string }
-  if (!name || !email) return error(400, 'name and email are required')
+  const parsed = signInSchema.safeParse(body)
+  if (!parsed.success) {
+    return error(400, parsed.error.issues.map((i) => i.message).join('; '))
+  }
+  const { name, email } = parsed.data
 
-  const existing = await db.user.findUnique({
-    where: { email },
-    include: { _count: { select: { ownedProjects: true } } },
-  })
+  const existing = await db.user.findUnique({ where: { email } })
   if (existing) {
-    return json({
-      id: existing.id,
-      name: existing.name,
-      email: existing.email,
-      color: existing.avatarColor,
-    })
+    return jsonWithCookie(
+      { id: existing.id, name: existing.name, email: existing.email, color: existing.avatarColor },
+      sessionCookieHeader(existing.id)
+    )
   }
 
   const created = await db.user.create({
-    data: { name, email, avatarColor: randomColor() },
+    data: { name, email, avatarColor: pickColor() },
   })
 
   // seed a starter project so the dashboard isn't empty
@@ -56,10 +55,14 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  return json({
-    id: created.id,
-    name: created.name,
-    email: created.email,
-    color: created.avatarColor,
-  })
+  return jsonWithCookie(
+    { id: created.id, name: created.name, email: created.email, color: created.avatarColor },
+    sessionCookieHeader(created.id),
+    201
+  )
+}
+
+const COLORS = ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4']
+function pickColor(): string {
+  return COLORS[Math.floor(Math.random() * COLORS.length)]
 }

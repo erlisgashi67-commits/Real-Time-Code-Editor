@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { json, error, requireUser, getAccess, canWrite } from '@/lib/access'
+import { updateCommentSchema, validate } from '@/lib/validations'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,15 +10,16 @@ type Ctx = { params: Promise<{ id: string; cid: string }> }
 /** Resolve / unresolve a comment, or delete it. */
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { id, cid } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!canWrite(permission)) return error(403, 'Read-only access')
 
   const body = await req.json().catch(() => ({}))
-  const { resolved } = body as { resolved?: boolean }
+  const parsed = validate(updateCommentSchema, body)
+  if ('error' in parsed) return parsed.error
+  const { resolved } = parsed.data
 
   const comment = await db.comment.findUnique({ where: { id: cid } })
   if (!comment || comment.projectId !== id) return error(404, 'Comment not found')
@@ -31,8 +33,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id, cid } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')

@@ -1,8 +1,8 @@
 'use client'
 
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 import Editor, { type OnMount, type BeforeMount } from '@monaco-editor/react'
-import type { editor as MEditor, IDisposable } from 'monaco-editor'
+import type { editor as MEditor, IDisposable, IContentWidget } from 'monaco-editor'
 import type { RemoteCursor } from './use-collab'
 
 const LANG_BY_EXT: Record<string, string> = {
@@ -45,7 +45,7 @@ export function CodeEditor({
   const editorRef = useRef<MEditor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null)
   const decorationsRef = useRef<string[]>([])
-  const widgetsRef = useRef<Map<string, { id: string; el: HTMLDivElement }>>(new Map())
+  const widgetsRef = useRef<Map<string, { id: string; el: HTMLDivElement & { __widget?: IContentWidget } }>>(new Map())
   const gutterSubRef = useRef<IDisposable | null>(null)
   const cursorSubRef = useRef<IDisposable | null>(null)
   const modelChangeRef = useRef(false)
@@ -56,7 +56,7 @@ export function CodeEditor({
     propsRef.current = { remoteCursors, commentLines }
   })
 
-  function syncWidgets() {
+  const syncWidgets = useCallback(() => {
     const editor = editorRef.current
     if (!editor) return
     const { remoteCursors: cursors } = propsRef.current
@@ -71,31 +71,31 @@ export function CodeEditor({
       domNode.style.backgroundColor = c.color
       domNode.textContent = c.name
 
-      const widget = {
+      const widget: IContentWidget = {
         getId: () => `remote-flag-${key}`,
         getDomNode: () => domNode,
         getPosition: () => ({
           position: { lineNumber: safeLine, column: Math.max(1, c.position.column) },
-          preference: [1, 2] as const,
+          preference: [1, 2],
         }),
       }
       if (!existing) {
-        editor.addContentWidget(widget as any)
+        editor.addContentWidget(widget)
         widgetsRef.current.set(key, { id: key, el: domNode })
       } else {
-        editor.layoutContentWidget(widget as any)
+        editor.layoutContentWidget(widget)
       }
-      ;(domNode as any).__widget = widget
+      domNode.__widget = widget
     })
     widgetsRef.current.forEach((entry, key) => {
       if (!active.has(key)) {
-        editor.removeContentWidget((entry.el as any).__widget)
+        if (entry.el.__widget) editor.removeContentWidget(entry.el.__widget)
         widgetsRef.current.delete(key)
       }
     })
-  }
+  }, [])
 
-  function updateDecorations() {
+  const updateDecorations = useCallback(() => {
     const editor = editorRef.current
     const monaco = monacoRef.current
     if (!editor || !monaco) return
@@ -130,7 +130,7 @@ export function CodeEditor({
 
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, decos)
     syncWidgets()
-  }
+  }, [syncWidgets])
 
   const handleBeforeMount: BeforeMount = (monaco) => {
     monacoRef.current = monaco
@@ -193,7 +193,7 @@ export function CodeEditor({
   // refresh decorations + widgets when cursors / comments / file change
   useEffect(() => {
     updateDecorations()
-  }, [remoteCursors, commentLines, path])
+  }, [updateDecorations, remoteCursors, commentLines, path])
 
   useEffect(() => {
     return () => {

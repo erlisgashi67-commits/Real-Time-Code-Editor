@@ -32,8 +32,15 @@ export function useCollab(projectId: string | null, user: ClientUser | null, han
     handlersRef.current = handlers
   })
 
+  // Destructure the primitive identity fields so the socket effect only
+  // re-subscribes when the actual user identity changes (not on every object
+  // re-creation, e.g. after /api/auth/me revalidation).
+  const userId = user?.id
+  const userName = user?.name
+  const userColor = user?.color
+
   useEffect(() => {
-    if (!projectId || !user) return
+    if (!projectId || !userId || !userName || !userColor) return
     const socket = io('/?XTransformPort=3003', {
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -46,7 +53,7 @@ export function useCollab(projectId: string | null, user: ClientUser | null, han
       setConnected(true)
       socket.emit('join-project', {
         projectId,
-        user: { id: user.id, name: user.name, color: user.color },
+        user: { id: userId, name: userName, color: userColor },
       })
     }
     socket.on('connect', onConnect)
@@ -66,7 +73,7 @@ export function useCollab(projectId: string | null, user: ClientUser | null, han
       setConnected(false)
       setOnline([])
     }
-  }, [projectId, user?.id])
+  }, [projectId, userId, userName, userColor])
 
   return {
     online,
@@ -80,12 +87,18 @@ export function useCollab(projectId: string | null, user: ClientUser | null, han
       }),
     sendCursor: (filePath: string, position: { lineNumber: number; column: number }, selection: { startLineNumber: number; endLineNumber: number } | null) =>
       socketRef.current?.emit('cursor', { projectId, filePath, position, selection }),
-    sendChat: (content: string) =>
+    sendChat: (content: string): string => {
+      // Client-generated id lets the sender dedupe its optimistic copy against
+      // the relayed broadcast (which the server echoes back to the whole room).
+      const clientId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
       socketRef.current?.emit('chat-message', {
         projectId,
         authorName: user?.name || 'anonymous',
         content,
-      }),
+        clientId,
+      })
+      return clientId
+    },
     sendComment: (comment: unknown) =>
       socketRef.current?.emit('comment-added', { projectId, comment }),
     sendCommentResolved: (commentId: string) =>

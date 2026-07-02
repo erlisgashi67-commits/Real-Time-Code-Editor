@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { json, error, requireUser, getAccess, isAdmin } from '@/lib/access'
+import { json, error, requireUser, resolveUser, getAccess, isAdmin } from '@/lib/access'
+import { createCollaboratorSchema, validate } from '@/lib/validations'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,8 +9,7 @@ type Ctx = { params: Promise<{ id: string }> }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const user = header ? await (await import('@/lib/session')).resolveUser(header) : null
+  const user = await resolveUser(req)
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!permission) return error(403, 'No access')
@@ -23,23 +23,17 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can manage collaborators')
 
   const body = await req.json().catch(() => ({}))
-  const { userName, email, permission: perm = 'WRITE' } = body as {
-    userName?: string
-    email?: string
-    permission?: string
-  }
-  if (!userName) return error(400, 'userName is required')
-  if (!['READ', 'WRITE', 'ADMIN'].includes(perm)) return error(400, 'invalid permission')
+  const parsed = validate(createCollaboratorSchema, body)
+  if ('error' in parsed) return parsed.error
+  const { userName, email, permission: perm } = parsed.data
 
-  // try to link to an existing user by email
   let linkedUser: { id: string } | null = null
   if (email) {
     linkedUser = await db.user.findUnique({ where: { email }, select: { id: true } })
@@ -60,8 +54,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')

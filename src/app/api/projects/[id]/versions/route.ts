@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { json, error, getAccess, canRead, requireUser } from '@/lib/access'
+import { json, error, requireUser, resolveUser, getAccess, canRead, canWrite } from '@/lib/access'
+import { restoreVersionSchema, validate } from '@/lib/validations'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,8 +10,7 @@ type Ctx = { params: Promise<{ id: string }> }
 /** List version history for a file (or all files). Query: ?filePath= or ?fileId= */
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const user = header ? await (await import('@/lib/session')).resolveUser(header) : null
+  const user = await resolveUser(req)
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!canRead(permission)) return error(403, 'No access')
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const filePath = url.searchParams.get('filePath')
   const fileId = url.searchParams.get('fileId')
 
-  let where: { projectId: string; fileId?: string } = { projectId: id }
+  const where: { projectId: string; fileId?: string } = { projectId: id }
   if (fileId) where.fileId = fileId
   else if (filePath) {
     const file = await db.file.findUnique({ where: { projectId_path: { projectId: id, path: filePath } } })
@@ -51,23 +51,22 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 /** Restore a file to a given version's content. Body: { versionId } */
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!canWrite(permission)) return error(403, 'Read-only access')
 
   const body = await req.json().catch(() => ({}))
-  const { versionId } = body as { versionId?: string }
-  if (!versionId) return error(400, 'versionId is required')
+  const parsed = validate(restoreVersionSchema, body)
+  if ('error' in parsed) return parsed.error
+  const { versionId } = parsed.data
 
   const version = await db.version.findUnique({ where: { id: versionId } })
   if (!version || version.projectId !== id) return error(404, 'Version not found')
 
   await db.file.update({ where: { id: version.fileId }, data: { content: version.content } })
 
-  // record the restore as a new version
   await db.version.create({
     data: {
       fileId: version.fileId,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Play, Trash2, Terminal as TerminalIcon, Eye, Loader2 } from 'lucide-react'
 import type { FileNode } from '@/lib/types'
@@ -40,13 +40,16 @@ export function TerminalPanel({ files, runSignal }: Props) {
     setRunning(false)
   }, [files])
 
-  // respond to external Run trigger (from top bar)
+  // respond to external Run trigger (from top bar).
+  // We intentionally only depend on runSignal — `run` is a useCallback that
+  // changes when `files` changes, but we do NOT want to re-run automatically
+  // whenever files change; only when the user explicitly hits Run.
   useEffect(() => {
     if (runSignal && runSignal > 0) {
-      // defer to avoid synchronous setState during effect
       const id = setTimeout(() => run(), 0)
       return () => clearTimeout(id)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runSignal])
 
   function clearOutput() {

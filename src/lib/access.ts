@@ -2,7 +2,7 @@ import { db } from '@/lib/db'
 import type { ClientUser, Permission } from '@/lib/types'
 
 // Re-export identity helpers so routes can import everything from one module.
-export { resolveUser, requireUser, randomColor } from '@/lib/session'
+export { resolveUser, requireUser, randomColor, sessionCookieHeader, clearSessionCookieHeader } from '@/lib/session'
 export type { ClientUser } from '@/lib/session'
 
 export interface AccessResult {
@@ -47,4 +47,15 @@ export function json(data: unknown, status = 200) {
 
 export function error(status: number, message: string) {
   return json({ error: message }, status)
+}
+
+/** JSON response that also sets a Set-Cookie header (used by sign-in). */
+export function jsonWithCookie(data: unknown, cookieHeader: string, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'content-type': 'application/json',
+      'set-cookie': cookieHeader,
+    },
+  })
 }

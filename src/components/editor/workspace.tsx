@@ -6,19 +6,21 @@ import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ArrowLeft, Share2, GitCommitHorizontal, Play, X, FileCode, Wifi, WifiOff, Circle, Save } from 'lucide-react'
-import { apiGet, apiPost, apiPut, apiDel } from '@/lib/api'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ArrowLeft, Share2, GitCommitHorizontal, Play, X, FileCode, Wifi, WifiOff, Circle, Save, Sparkles, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { apiGet, apiPost, apiPut, apiPatch, apiDel } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { useCollab, type RemoteCursor } from './use-collab'
 import { FileTree } from './file-tree'
-import { CodeEditor, languageForPath } from './code-editor'
+import { CodeEditor } from './code-editor'
 import { SidePanel } from './side-panel'
 import { TerminalPanel } from './terminal-panel'
 import { ShareDialog } from './share-dialog'
+import { CommandPalette, type CommandItem } from './command-palette'
+import { useShortcuts } from './use-shortcuts'
+import { AIAssistant } from './ai-assistant'
 import { toast } from 'sonner'
 import type { ChatRecord, CommentRecord, VersionRecord, FileNode, PresenceUser } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -55,9 +57,23 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
   const [commentText, setCommentText] = useState('')
   const [runSignal, setRunSignal] = useState(0)
   const [saving, setSaving] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteFileMode, setPaletteFileMode] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [sidebarVisible, setSidebarVisible] = useState(true)
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const readOnly = project ? project.permission === 'READ' : true
+
+  // ---- version history (defined first; used by loadProject + openFile) ----
+  const loadVersions = useCallback(async (path?: string) => {
+    try {
+      const v = await apiGet<VersionRecord[]>(`/api/projects/${projectId}/versions${path ? `?filePath=${encodeURIComponent(path)}` : ''}`)
+      setVersions(v)
+    } catch {
+      // ignore
+    }
+  }, [projectId])
 
   // ---- load project + files + chat + comments ----
   const loadProject = useCallback(async () => {
@@ -96,7 +112,7 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
       toast.error(err instanceof Error ? err.message : 'Failed to load project')
       onBack()
     }
-  }, [projectId])
+  }, [projectId, loadVersions, onBack])
 
   const openFile = useCallback(async (path: string, id?: string, list?: FileItem[]) => {
     const fl = list || files
@@ -115,16 +131,7 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
     setActivePath(path)
     // load versions for this file
     loadVersions(path)
-  }, [files, contents, projectId])
-
-  const loadVersions = useCallback(async (path?: string) => {
-    try {
-      const v = await apiGet<VersionRecord[]>(`/api/projects/${projectId}/versions${path ? `?filePath=${encodeURIComponent(path)}` : ''}`)
-      setVersions(v)
-    } catch {
-      // ignore
-    }
-  }, [projectId])
+  }, [files, contents, projectId, loadVersions])
 
   useEffect(() => {
     loadProject()
@@ -160,7 +167,10 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
         })
       }, 5000)
     },
-    onChat: (m) => setMessages((prev) => [...prev, m]),
+    onChat: (m) =>
+      // Dedupe by id: the server relays chat back to the sender too, and the
+      // sender already added an optimistic copy with the same client-generated id.
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m])),
     onComment: (d) => {
       const c = d.comment as CommentRecord
       setComments((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]))
@@ -263,17 +273,18 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
 
   // ---- chat ----
   function sendChat(content: string) {
-    collab.sendChat(content)
-    // optimistically add; server relay includes sender too — dedupe by id
+    // sendChat returns a client-generated id; use it for the optimistic copy so
+    // the relayed broadcast (same id) is deduped in onChat — no double messages.
+    const clientId = collab.sendChat(content)
     const optimistic: ChatRecord = {
-      id: `local-${Date.now()}`,
+      id: clientId,
       authorName: user?.name || 'me',
       content,
       system: false,
       createdAt: new Date().toISOString(),
     }
-    setMessages((prev) => [...prev, optimistic])
-    // persist
+    setMessages((prev) => (prev.some((x) => x.id === clientId) ? prev : [...prev, optimistic]))
+    // persist to DB (fire-and-forget; the relayed message is the source of truth for the chat list)
     apiPost(`/api/projects/${projectId}/chat`, { content }).catch(() => {})
   }
 
@@ -295,7 +306,7 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
 
   async function resolveComment(id: string) {
     try {
-      await apiPut(`/api/projects/${projectId}/comments/${id}`, { resolved: true })
+      await apiPatch(`/api/projects/${projectId}/comments/${id}`, { resolved: true })
       setComments((prev) => prev.map((c) => (c.id === id ? { ...c, resolved: true } : c)))
       collab.sendCommentResolved(id)
     } catch (err) {
@@ -303,7 +314,7 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
     }
   }
 
-  function jumpToComment(filePath: string, line: number) {
+  function jumpToComment(filePath: string, _line: number) {
     openFile(filePath).then(() => {
       // editor will show the glyph; we just switch file
     })
@@ -365,6 +376,34 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
   const dirtyCount = Object.values(contents).filter((c) => c.dirty).length
   const fileNodes: FileNode[] = files.map((f) => ({ id: f.id, path: f.path, content: contents[f.path]?.content || '', updatedAt: '' }))
 
+  // ---- keyboard shortcuts ----
+  useShortcuts({
+    onOpenPalette: () => { setPaletteFileMode(false); setPaletteOpen(true) },
+    onOpenPaletteFiles: () => { setPaletteFileMode(true); setPaletteOpen(true) },
+    onCommit: () => { if (!readOnly) setCommitOpen(true) },
+    onRun: () => setRunSignal((s) => s + 1),
+    onToggleSidebar: () => setSidebarVisible((v) => !v),
+    onFocusChat: () => {
+      const input = document.querySelector<HTMLInputElement>('input[placeholder="Type a message…"]')
+      input?.focus()
+    },
+  })
+
+  // ---- command palette commands ----
+  const commands: CommandItem[] = [
+    { id: 'run', label: 'Run Code', group: 'Run', icon: Play, hint: '⌘↵', action: () => setRunSignal((s) => s + 1) },
+    { id: 'commit', label: 'Create Commit', group: 'Git', icon: GitCommitHorizontal, hint: '⌘S', action: () => { if (!readOnly) setCommitOpen(true) } },
+    { id: 'share', label: 'Open Share Dialog', group: 'Share', icon: Share2, action: () => setShareOpen(true) },
+    { id: 'ai', label: 'Toggle AI Assistant', group: 'View', icon: Sparkles, action: () => setAiOpen((v) => !v) },
+    { id: 'toggle-sidebar', label: 'Toggle Sidebar', group: 'View', icon: PanelLeftClose, hint: '⌘B', action: () => setSidebarVisible((v) => !v) },
+    { id: 'go-dashboard', label: 'Back to Dashboard', group: 'Go', icon: ArrowLeft, action: () => onBack() },
+  ]
+
+  // active file for the AI assistant
+  const activeFileForAI = activePath && contents[activePath]
+    ? { path: activePath, content: contents[activePath].content }
+    : null
+
   if (!project) {
     return (
       <div className="h-screen grid place-items-center bg-slate-950 text-slate-400">
@@ -381,6 +420,9 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
       <header className="h-12 shrink-0 border-b border-slate-800 bg-slate-900 flex items-center gap-2 px-3">
         <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white px-2" onClick={onBack}>
           <ArrowLeft className="size-4" />
+        </Button>
+        <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white px-2 hidden sm:flex" onClick={() => setSidebarVisible((v) => !v)} title="Toggle sidebar (⌘B)">
+          {sidebarVisible ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
         </Button>
         <div className="flex items-center gap-2 min-w-0">
           <div className="size-6 rounded bg-emerald-500 grid place-items-center text-emerald-950 font-black text-[10px]">{'</>'}</div>
@@ -412,11 +454,14 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
             <span className="hidden md:inline">{collab.connected ? 'Live' : 'Reconnecting…'}</span>
           </div>
 
-          <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-8" onClick={() => setRunSignal((s) => s + 1)}>
+          <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-8" onClick={() => setRunSignal((s) => s + 1)} title="Run (⌘↵)">
             <Play className="size-3.5 mr-1" /> Run
           </Button>
+          <Button size="sm" variant="ghost" className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 h-8" onClick={() => setAiOpen((v) => !v)} title="AI Assistant">
+            <Sparkles className="size-3.5 mr-1" /> AI
+          </Button>
           {!readOnly && (
-            <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-8" onClick={() => setCommitOpen(true)}>
+            <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-8" onClick={() => setCommitOpen(true)} title="Commit (⌘S)">
               <GitCommitHorizontal className="size-3.5 mr-1" /> Commit
               {dirtyCount > 0 && <span className="ml-1 text-[10px] px-1 rounded-full bg-amber-500 text-amber-950">{dirtyCount}</span>}
             </Button>
@@ -430,19 +475,23 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
       {/* Body */}
       <div className="flex-1 min-h-0">
         <PanelGroup direction="horizontal" autoSaveId="codesync-main">
-          {/* File tree */}
-          <Panel defaultSize={16} minSize={12} maxSize={28} className="bg-slate-900 border-r border-slate-800">
-            <FileTree
-              files={files}
-              activePath={activePath}
-              commentCounts={commentCounts}
-              readOnly={readOnly}
-              onSelect={(p) => openFile(p)}
-              onCreate={createFile}
-              onDelete={deleteFile}
-            />
-          </Panel>
-          <PanelResizeHandle className="w-1 bg-slate-800 hover:bg-emerald-500/50 transition-colors" />
+          {/* File tree (conditionally rendered so ⌘B fully hides it) */}
+          {sidebarVisible && (
+            <>
+              <Panel defaultSize={16} minSize={12} maxSize={28} className="bg-slate-900 border-r border-slate-800">
+                <FileTree
+                  files={files}
+                  activePath={activePath}
+                  commentCounts={commentCounts}
+                  readOnly={readOnly}
+                  onSelect={(p) => openFile(p)}
+                  onCreate={createFile}
+                  onDelete={deleteFile}
+                />
+              </Panel>
+              <PanelResizeHandle className="w-1 bg-slate-800 hover:bg-emerald-500/50 transition-colors" />
+            </>
+          )}
 
           {/* Editor + terminal column */}
           <Panel defaultSize={56} minSize={30}>
@@ -588,6 +637,25 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Command palette (Cmd+Shift+P / Cmd+P) */}
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        fileMode={paletteFileMode}
+        files={files}
+        commands={commands}
+        onOpenFile={(f) => openFile(f.path)}
+      />
+
+      {/* AI assistant floating panel */}
+      <AIAssistant
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        projectId={projectId}
+        activeFile={activeFileForAI}
+        allFiles={files.map((f) => ({ path: f.path }))}
+      />
     </div>
   )
 }

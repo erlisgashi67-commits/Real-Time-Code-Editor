@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useApp } from '@/lib/store'
-import { getStoredUser, apiPost } from '@/lib/api'
+import { getStoredUser, setStoredUser, fetchMe, apiPost } from '@/lib/api'
 import { AuthGate } from '@/components/auth-gate'
 import { Dashboard } from '@/components/dashboard'
 import { Workspace } from '@/components/editor/workspace'
@@ -13,12 +13,28 @@ export default function Home() {
   const [ready, setReady] = useState(false)
   const claimingRef = useRef(false)
 
-  // hydrate user from localStorage on mount
+  // Rehydrate the session from the signed httpOnly cookie (source of truth).
+  // The localStorage cache is only used to avoid an auth-gate flash while the
+  // cookie check is in flight.
   useEffect(() => {
-    const stored = getStoredUser()
-    if (stored && !user) setUser(stored)
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time mount flag to avoid SSR hydration mismatch
-    setReady(true)
+    let cancelled = false
+    const cached = getStoredUser()
+    if (cached && !user) setUser(cached)
+    fetchMe().then((me) => {
+      if (cancelled) return
+      if (me) {
+        setStoredUser(me)
+        setUser(me)
+      } else if (cached) {
+        // cookie expired/invalid — clear the stale local cache
+        setStoredUser(null)
+        setUser(null)
+      }
+      setReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [user, setUser])
 
   // handle ?share=TOKEN — claim access once signed in

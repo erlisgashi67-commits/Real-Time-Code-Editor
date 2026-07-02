@@ -5,13 +5,11 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Plus, FileCode, Globe, Terminal, Atom, FileText, Users, Clock, LogOut, Sparkles } from 'lucide-react'
-import { apiGet, apiPost, apiDel } from '@/lib/api'
-import { setStoredUser } from '@/lib/api'
+import { apiGet, apiPost, signOut as doSignOut } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { TEMPLATES } from '@/lib/templates'
 import { toast } from 'sonner'
@@ -36,13 +34,6 @@ const TEMPLATE_ICONS: Record<string, React.ComponentType<{ className?: string }>
   FileCode, Globe, Terminal, Atom, FileText,
 }
 
-const LANG_COLORS: Record<string, string> = {
-  javascript: 'bg-amber-100 text-amber-800',
-  html: 'bg-orange-100 text-orange-800',
-  python: 'bg-emerald-100 text-emerald-800',
-  markdown: 'bg-slate-100 text-slate-700',
-}
-
 export function Dashboard() {
   const { user, openProject, setUser } = useApp()
   const [projects, setProjects] = useState<ProjectSummary[]>([])
@@ -65,8 +56,8 @@ export function Dashboard() {
     load()
   }, [])
 
-  function signOut() {
-    setStoredUser(null)
+  async function signOut() {
+    await doSignOut()
     setUser(null)
   }
 

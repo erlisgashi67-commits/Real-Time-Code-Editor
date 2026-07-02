@@ -1,16 +1,16 @@
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { json, error, requireUser, getAccess, canWrite, canRead } from '@/lib/access'
+import { json, error, requireUser, resolveUser, getAccess, canWrite, canRead } from '@/lib/access'
+import { updateFileSchema, validate } from '@/lib/validations'
 
 export const dynamic = 'force-dynamic'
 
 type Ctx = { params: Promise<{ id: string; fid: string }> }
 
-/** Get a single file's content, or update it, or delete it. */
+/** Get a single file's content. */
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id, fid } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const user = header ? await (await import('@/lib/session')).resolveUser(header) : null
+  const user = await resolveUser(req)
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!canRead(permission)) return error(403, 'No access')
@@ -22,18 +22,25 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const { id, fid } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
   if (!canWrite(permission)) return error(403, 'Read-only access')
 
   const body = await req.json().catch(() => ({}))
-  const { content, path } = body as { content?: string; path?: string }
+  const parsed = validate(updateFileSchema, body)
+  if ('error' in parsed) return parsed.error
+  const { content, path } = parsed.data
 
   const file = await db.file.findUnique({ where: { id: fid } })
   if (!file || file.projectId !== id) return error(404, 'File not found')
+
+  // if renaming, ensure the target path doesn't collide
+  if (path && path !== file.path) {
+    const clash = await db.file.findUnique({ where: { projectId_path: { projectId: id, path } } })
+    if (clash) return error(409, 'A file with that path already exists')
+  }
 
   const updated = await db.file.update({
     where: { id: fid },
@@ -48,8 +55,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id, fid } = await ctx.params
-  const header = req.headers.get('x-codesync-user')
-  const { user, error: err } = await requireUser(header)
+  const { user, error: err } = await requireUser(req)
   if (err) return err
   const { project, permission } = await getAccess(id, user)
   if (!project) return error(404, 'Project not found')
