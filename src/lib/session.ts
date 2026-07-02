@@ -130,16 +130,25 @@ export async function resolveUser(req: Request): Promise<ClientUser | null> {
   return { id: dbUser.id, name: dbUser.name, email: dbUser.email, color: dbUser.avatarColor }
 }
 
-/** Require an authenticated user, returning a 401 Response if missing/invalid. */
-export async function requireUser(req: Request): Promise<{ user: ClientUser } | { error: Response }> {
+/** Result of requireUser — a discriminated union that's safely narrowable. */
+export type RequireUserResult =
+  | { ok: true; user: ClientUser }
+  | { ok: false; error: Response }
+
+/**
+ * Require an authenticated user. Returns a discriminated union — narrow with
+ * `if (!result.ok) return result.error` before reading `result.user`.
+ */
+export async function requireUser(req: Request): Promise<RequireUserResult> {
   const user = await resolveUser(req)
   if (!user) {
     return {
+      ok: false,
       error: new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { 'content-type': 'application/json' },
       }),
     }
   }
-  return { user }
+  return { ok: true, user }
 }

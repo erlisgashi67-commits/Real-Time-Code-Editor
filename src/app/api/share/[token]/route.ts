@@ -35,11 +35,19 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 /** Claim a share link: register the current (cookie-authed) user as a collaborator.
  *  Access is granted by the user's stable account ID — NOT by display name —
- *  so two accounts with the same name can't inherit each other's access. */
+ *  so two accounts with the same name can't inherit each other's access.
+ *
+ *  Resolution order:
+ *    1. Existing collaborator linked to this userId → update permission.
+ *    2. Pending name-only invite (userId=null) whose userName matches this
+ *       user's name → LINK it (set userId + permission), converting the
+ *       pending invite into a real collaborator record. This cleans up stale
+ *       pending invites instead of leaving duplicates.
+ *    3. No existing record → create a new collaborator. */
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { token } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
 
   const link = await db.shareLink.findUnique({ where: { token } })
   if (!link) return error(404, 'Share link not found')
@@ -48,27 +56,37 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
 
   const perm = link.permission as Permission
-  // Upsert by [projectId, userId] — the user's stable account ID. If a
-  // pending email-invite (userId=null) exists for this user, link it;
-  // otherwise create a new collaborator record.
-  const existing = await db.collaborator.findFirst({
-    where: { projectId: link.projectId, userId: user!.id },
+  const projectId = link.projectId
+  const { id: userId, name: userName } = auth.user
+
+  // 1. Already linked to this account?
+  const linked = await db.collaborator.findFirst({
+    where: { projectId, userId },
   })
-  if (existing) {
+  if (linked) {
     await db.collaborator.update({
-      where: { id: existing.id },
+      where: { id: linked.id },
       data: { permission: perm },
     })
-  } else {
-    await db.collaborator.create({
-      data: {
-        projectId: link.projectId,
-        userName: user!.name,
-        userId: user!.id,
-        permission: perm,
-      },
-    })
+    return json({ projectId, permission: perm })
   }
 
-  return json({ projectId: link.projectId, permission: perm })
+  // 2. Pending name-only invite matching this user's name → link it.
+  const pending = await db.collaborator.findFirst({
+    where: { projectId, userId: null, userName },
+  })
+  if (pending) {
+    await db.collaborator.update({
+      where: { id: pending.id },
+      data: { userId, permission: perm },
+    })
+    return json({ projectId, permission: perm })
+  }
+
+  // 3. No existing record → create one linked to this account.
+  await db.collaborator.create({
+    data: { projectId, userName, userId, permission: perm },
+  })
+
+  return json({ projectId, permission: perm })
 }

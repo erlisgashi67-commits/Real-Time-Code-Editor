@@ -9,8 +9,8 @@ type Ctx = { params: Promise<{ id: string }> }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const user = await resolveUser(req)
-  const { project, permission } = await getAccess(id, user)
+  const currentUser = await resolveUser(req)
+  const { project, permission } = await getAccess(id, currentUser)
   if (!project) return error(404, 'Project not found')
   if (!canRead(permission)) return error(403, 'No access')
 
@@ -24,9 +24,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!canWrite(permission)) return error(403, 'Read-only access')
 
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const message = await db.chatMessage.create({
     data: {
       projectId: id,
-      authorName: user!.name,
+      authorName: auth.user.name,
       content,
     },
   })

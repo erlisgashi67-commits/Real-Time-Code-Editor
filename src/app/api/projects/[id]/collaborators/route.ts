@@ -9,8 +9,8 @@ type Ctx = { params: Promise<{ id: string }> }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const user = await resolveUser(req)
-  const { project, permission } = await getAccess(id, user)
+  const currentUser = await resolveUser(req)
+  const { project, permission } = await getAccess(id, currentUser)
   if (!project) return error(404, 'Project not found')
   if (!permission) return error(403, 'No access')
 
@@ -23,9 +23,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can manage collaborators')
 
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if ('error' in parsed) return parsed.error
   const { userName, email, permission: perm } = parsed.data
 
-  // Link to an existing user account by email (the stable identifier).
+  // Link to an existing auth.user account by email (the stable identifier).
   // The display `userName` is just for UI — access is always by userId.
   let linkedUser: { id: string } | null = null
   if (email) {
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return json(created, 201)
   }
 
-  // No linked user (pending email invite) — create a name-only record.
+  // No linked auth.user (pending email invite) — create a name-only record.
   // userId stays null until the invitee signs up and claims a share link.
   const existingPending = await db.collaborator.findFirst({
     where: { projectId: id, userId: null, userName },
@@ -79,9 +79,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can manage collaborators')
 

@@ -10,9 +10,9 @@ type Ctx = { params: Promise<{ id: string; cid: string }> }
 /** Resolve / unresolve a comment, or delete it. */
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { id, cid } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!canWrite(permission)) return error(403, 'Read-only access')
 
@@ -33,9 +33,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id, cid } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!canWrite(permission)) return error(403, 'Read-only access')
 

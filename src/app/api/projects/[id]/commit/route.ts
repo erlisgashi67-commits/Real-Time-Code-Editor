@@ -13,9 +13,9 @@ type Ctx = { params: Promise<{ id: string }> }
  */
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!canWrite(permission)) return error(403, 'Read-only access')
 
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if ('error' in parsed) return parsed.error
   const { message, filePath } = parsed.data
   const commitHash = nanoid(8)
-  const authorName = user!.name
+  const authorName = auth.user.name
 
   const files = filePath
     ? await db.file.findMany({ where: { projectId: id, path: filePath } })
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   if (files.length === 0) return error(404, 'No files to commit')
 
-  const created = []
+  const created: Array<{ id: string; filePath: string; hash: string }> = []
   for (const file of files) {
     const prev = await db.version.findFirst({
       where: { fileId: file.id },

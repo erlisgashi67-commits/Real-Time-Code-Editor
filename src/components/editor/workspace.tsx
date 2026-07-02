@@ -259,8 +259,16 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
       await apiDel(`/api/projects/${projectId}/files/${file.id}`)
       setFiles((fl) => fl.filter((f) => f.path !== path))
       setContents((c) => { const n = { ...c }; delete n[path]; return n })
-      setOpenTabs((t) => t.filter((p) => p !== path))
-      if (activePath === path) setActivePath(openTabs.find((p) => p !== path) || null)
+      // Recompute the next active tab from the UPDATED tab list inside the
+      // setter — using the stale `openTabs` closure can select the wrong tab
+      // or leave focus on a deleted file after fast edits.
+      setOpenTabs((t) => {
+        const next = t.filter((p) => p !== path)
+        if (activePath === path) {
+          setActivePath(next[next.length - 1] || null)
+        }
+        return next
+      })
       toast.success(`Deleted ${path}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete file')

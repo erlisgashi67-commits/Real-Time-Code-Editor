@@ -10,9 +10,9 @@ type Ctx = { params: Promise<{ id: string }> }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can manage share links')
 
@@ -25,9 +25,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can create share links')
 
@@ -49,9 +49,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
-  const { user, error: err } = await requireUser(req)
-  if (err) return err
-  const { project, permission } = await getAccess(id, user)
+  const auth = await requireUser(req)
+  if (!auth.ok) return auth.error
+  const { project, permission } = await getAccess(id, auth.user)
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can manage share links')
 

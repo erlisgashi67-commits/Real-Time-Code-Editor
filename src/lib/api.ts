@@ -109,14 +109,31 @@ export async function api<T = unknown>(
     credentials: 'include', // send the httpOnly session cookie
   })
   const text = await res.text()
-  const data = text ? JSON.parse(text) : null
+  // Parse JSON defensively — the server might return an empty body (204) or a
+  // non-JSON error page (e.g. a proxy 502). In those cases `data` is null so
+  // the error path below falls back to a status-code message.
+  let data: unknown = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      // Non-JSON response (HTML error page, plain text). Use the raw text as
+      // the error message if the request failed; otherwise return null.
+      data = null
+    }
+  }
   if (!res.ok) {
     if (res.status === 401) {
       // Silently handle — clears user if armed, does nothing if not armed.
       handleUnauthorized()
       throw new SessionExpiredError()
     }
-    const msg = (data && (data.error || data.message)) || `Request failed (${res.status})`
+    const msg =
+      (data && typeof data === 'object' && ('error' in data || 'message' in data)
+        ? ((data as { error?: string; message?: string }).error || (data as { message?: string }).message)
+        : null) ||
+      (text && !text.startsWith('{') ? text.slice(0, 200) : null) ||
+      `Request failed (${res.status})`
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data as T

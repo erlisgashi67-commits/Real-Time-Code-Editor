@@ -1,3 +1,15 @@
+/**
+ * The authenticated user as seen by the client. This is the single source of
+ * truth for the ClientUser type — every module that needs it imports from
+ * here (directly or via re-exports from @/lib/session or @/lib/access).
+ */
+export interface ClientUser {
+  id: string
+  name: string
+  email: string
+  color: string
+}
+
 export interface FileNode {
   id: string
   path: string
