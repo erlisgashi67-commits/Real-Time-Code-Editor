@@ -8,6 +8,7 @@ import {
   apiPost,
   registerSessionExpiredHandler,
   armSessionHandler,
+  disarmSessionHandler,
   isSessionExpiredError,
 } from '@/lib/api'
 import { AuthGate } from '@/components/auth-gate'
