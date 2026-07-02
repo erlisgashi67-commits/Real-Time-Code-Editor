@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   if (existing) {
     return jsonWithCookie(
       { id: existing.id, name: existing.name, email: existing.email, color: existing.avatarColor },
-      sessionCookieHeader(existing.id)
+      sessionCookieHeader(existing.id, req)
     )
   }
 
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
 
   return jsonWithCookie(
     { id: created.id, name: created.name, email: created.email, color: created.avatarColor },
-    sessionCookieHeader(created.id),
+    sessionCookieHeader(created.id, req),
     201
   )
 }

@@ -49,16 +49,37 @@ function verifyCookieValue(value: string): string | null {
   }
 }
 
-/** Build the Set-Cookie header value for an authenticated session. */
-export function sessionCookieHeader(userId: string): string {
+/** Build the Set-Cookie header value for an authenticated session.
+ *  Accepts an optional request so cookie attributes can adapt to the origin
+ *  (e.g. SameSite=None for cross-origin preview domains). */
+export function sessionCookieHeader(userId: string, req?: Request): string {
   const val = makeCookieValue(userId)
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
-  return `${SESSION_COOKIE}=${val}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`
+  const attrs = cookieAttributes(req)
+  return `${SESSION_COOKIE}=${val}; Path=/; HttpOnly; ${attrs}; Max-Age=${COOKIE_MAX_AGE}`
 }
 
 /** Build the Set-Cookie header value that clears the session cookie. */
-export function clearSessionCookieHeader(): string {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+export function clearSessionCookieHeader(req?: Request): string {
+  const attrs = cookieAttributes(req)
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; ${attrs}; Max-Age=0`
+}
+
+/**
+ * Compute SameSite / Secure attributes for the cookie based on the request.
+ * - Localhost (same-origin dev): SameSite=Lax (no Secure needed in dev).
+ * - Cross-origin preview domain (HTTPS): SameSite=None; Secure — required for
+ *   the browser to accept and send the cookie across origins.
+ */
+function cookieAttributes(req?: Request): string {
+  const host = req?.headers.get('host') || ''
+  const origin = req?.headers.get('origin') || ''
+  const isLocalhost = host.startsWith('localhost') || host.startsWith('127.0.0.1') ||
+    origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')
+  if (isLocalhost) {
+    return process.env.NODE_ENV === 'production' ? 'SameSite=Lax; Secure' : 'SameSite=Lax'
+  }
+  // Cross-origin (preview domain, etc.) — must be SameSite=None; Secure
+  return 'SameSite=None; Secure'
 }
 
 function readCookie(req: Request, name: string): string | null {

@@ -11,6 +11,6 @@ export async function GET(req: Request) {
 }
 
 /** Sign out: clear the session cookie. */
-export async function DELETE() {
-  return jsonWithCookie({ ok: true }, clearSessionCookieHeader())
+export async function DELETE(req: Request) {
+  return jsonWithCookie({ ok: true }, clearSessionCookieHeader(req))
 }
