@@ -2,7 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useApp } from '@/lib/store'
-import { setStoredUser, fetchMe, apiPost, registerSessionExpiredHandler } from '@/lib/api'
+import {
+  setStoredUser,
+  fetchMe,
+  apiPost,
+  registerSessionExpiredHandler,
+  armSessionHandler,
+  disarmSessionHandler,
+  isSessionExpiredError,
+} from '@/lib/api'
 import { AuthGate } from '@/components/auth-gate'
 import { Dashboard } from '@/components/dashboard'
 import { Workspace } from '@/components/editor/workspace'
@@ -14,11 +22,13 @@ export default function Home() {
   const claimingRef = useRef(false)
   const didInitRef = useRef(false)
 
-  // Register a global 401 handler: if ANY API call returns 401 mid-session
+  // Register a global 401 handler: if ANY API call returns 401 MID-SESSION
   // (expired cookie, server restart, etc.), clear the stale user and show a
-  // single clear toast instead of N cryptic "Unauthorized" errors.
+  // single clear toast. This is only "armed" AFTER fetchMe() confirms a valid
+  // session, so it never fires during initial load / sign-in.
   useEffect(() => {
     registerSessionExpiredHandler(() => {
+      disarmSessionHandler()
       setStoredUser(null)
       setUser(null)
       setReady(true)
@@ -30,16 +40,6 @@ export default function Home() {
   }, [setUser])
 
   // Rehydrate the session from the signed httpOnly cookie — exactly ONCE.
-  //
-  // We deliberately do NOT hydrate `user` from the localStorage cache before
-  // this resolves. The cookie is the single source of truth; the cache is only
-  // a write-through mirror for offline / instant-display purposes. Showing a
-  // brief loading screen (while !ready) avoids both:
-  //   - the auth-gate flash, and
-  //   - the 401 race where the Dashboard mounts with a stale cache + no cookie.
-  //
-  // A `didInitRef` guard ensures this runs once, not on every `user` change
-  // (which previously caused an infinite fetchMe → setUser → re-render loop).
   useEffect(() => {
     if (didInitRef.current) return
     didInitRef.current = true
@@ -49,6 +49,9 @@ export default function Home() {
       if (me) {
         setStoredUser(me)
         setUser(me)
+        // Arm the session-expired handler ONLY after we've confirmed a valid
+        // session. Before this, 401s are a normal "not signed in" state.
+        armSessionHandler()
       } else {
         setStoredUser(null)
         setUser(null)
@@ -59,6 +62,13 @@ export default function Home() {
       cancelled = true
     }
   }, [setUser])
+
+  // When the user signs in via the AuthGate, arm the handler.
+  useEffect(() => {
+    if (user && ready) {
+      armSessionHandler()
+    }
+  }, [user, ready])
 
   // handle ?share=TOKEN — claim access once signed in
   useEffect(() => {
@@ -76,7 +86,9 @@ export default function Home() {
         window.history.replaceState({}, '', url.toString())
       })
       .catch((err) => {
-        toast.error(err instanceof Error ? err.message : 'Invalid or expired share link')
+        if (!isSessionExpiredError(err)) {
+          toast.error(err instanceof Error ? err.message : 'Invalid or expired share link')
+        }
       })
       .finally(() => {
         claimingRef.current = false

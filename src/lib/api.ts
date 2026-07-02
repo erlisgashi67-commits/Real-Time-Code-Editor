@@ -27,29 +27,48 @@ export function setStoredUser(u: ClientUser | null) {
   else localStorage.removeItem(STORAGE_KEY)
 }
 
-/**
- * Callback invoked when any API call returns 401 (session expired / invalid).
- * Registered by the app shell (page.tsx) so we can clear the stale local user
- * and bounce back to the auth gate with a clear message — instead of every
- * individual call site showing a cryptic "Unauthorized" toast.
- */
+// ---------------------------------------------------------------------------
+// Session-expiry handling
+//
+// When any authenticated API call returns 401, we want to:
+//   1. Clear the stale user state (so the auth gate re-appears).
+//   2. Show ONE clear toast: "Your session has expired."
+//
+// But we must NOT fire during the initial page load / rehydration — a 401
+// there just means "no session yet" (the user hasn't signed in), which is a
+// normal state, not an expiry. So the handler is only "armed" AFTER the app
+// has confirmed a valid session via fetchMe().
+// ---------------------------------------------------------------------------
+
 let onSessionExpired: (() => void) | null = null
+/** Only true once the app has confirmed a valid session. Prevents the
+ *  session-expired toast from firing during initial load / sign-in. */
+let handlerArmed = false
+/** Once fired, stays true until the user re-authenticates (armSessionHandler). */
+let sessionExpiredFired = false
 
 export function registerSessionExpiredHandler(handler: (() => void) | null) {
   onSessionExpired = handler
 }
 
-// Debounce: a single expired session can trigger many simultaneous 401s; only
-// fire the handler once.
-let sessionExpiredFired = false
+/** Arm the session-expired handler — call this AFTER fetchMe() confirms a
+ *  valid user. Before this, 401s are silently treated as "not signed in". */
+export function armSessionHandler() {
+  handlerArmed = true
+  sessionExpiredFired = false // reset for the new session
+}
+
+/** Disarm — call this when the user signs out or the session expires. */
+export function disarmSessionHandler() {
+  handlerArmed = false
+}
+
 function fireSessionExpired() {
-  if (sessionExpiredFired) return
+  // Only fire if the handler is armed (user was previously authenticated)
+  // and hasn't already fired for this session.
+  if (!handlerArmed || sessionExpiredFired) return
   sessionExpiredFired = true
   onSessionExpired?.()
-  // reset after a short delay so a future re-sign-in can expire again
-  setTimeout(() => {
-    sessionExpiredFired = false
-  }, 2000)
 }
 
 /**
@@ -87,10 +106,10 @@ export async function api<T = unknown>(
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
   if (!res.ok) {
-    // On 401, the session is gone (expired cookie, server restart, etc.).
-    // Fire the global handler once (clears user + shows a single toast) and
-    // throw a SessionExpiredError so callers can skip their own redundant toast.
     if (res.status === 401) {
+      // If the handler is armed (user was authenticated), this is a real
+      // session expiry — fire the global handler. If not armed, this is just
+      // a "not signed in" state during initial load — stay quiet.
       fireSessionExpired()
       throw new SessionExpiredError()
     }
@@ -109,11 +128,19 @@ export const apiPatch = <T = unknown>(path: string, body?: unknown) =>
   api<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined })
 export const apiDel = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE' })
 
-/** Re-hydrate the current user from the signed session cookie. */
+/**
+ * Re-hydrate the current user from the signed session cookie.
+ *
+ * Uses a RAW fetch (not `api()`) so it NEVER triggers the session-expired
+ * handler — a missing/invalid session during initial load is a normal "not
+ * signed in" state, not an expiry. Returns null if there's no valid session.
+ */
 export async function fetchMe(): Promise<ClientUser | null> {
   try {
-    const res = await api<{ user: ClientUser | null }>('/api/auth/me')
-    return res.user
+    const res = await fetch('/api/auth/me', { credentials: 'include' })
+    if (!res.ok) return null
+    const data = (await res.json()) as { user: ClientUser | null }
+    return data.user
   } catch {
     return null
   }
@@ -121,6 +148,7 @@ export async function fetchMe(): Promise<ClientUser | null> {
 
 /** Sign out: clear the cookie server-side and the local cache. */
 export async function signOut(): Promise<void> {
+  disarmSessionHandler()
   try {
     await apiPost('/api/auth/logout')
   } catch {
