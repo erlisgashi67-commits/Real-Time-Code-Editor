@@ -8,7 +8,6 @@ import {
   apiPost,
   registerSessionExpiredHandler,
   armSessionHandler,
-  disarmSessionHandler,
   isSessionExpiredError,
 } from '@/lib/api'
 import { AuthGate } from '@/components/auth-gate'
@@ -23,16 +22,14 @@ export default function Home() {
   const didInitRef = useRef(false)
 
   // Register a global 401 handler: if ANY API call returns 401 MID-SESSION
-  // (expired cookie, server restart, etc.), clear the stale user and show a
-  // single clear toast. This is only "armed" AFTER fetchMe() confirms a valid
-  // session, so it never fires during initial load / sign-in.
+  // (expired cookie, server restart, etc.), silently clear the user so the
+  // auth gate re-appears. No toast — the auth gate itself communicates
+  // "you need to sign in". Only armed AFTER a valid session is confirmed.
   useEffect(() => {
     registerSessionExpiredHandler(() => {
-      disarmSessionHandler()
       setStoredUser(null)
       setUser(null)
       setReady(true)
-      toast.error('Your session has expired. Please sign in again.')
     })
     return () => {
       registerSessionExpiredHandler(null)
@@ -49,8 +46,6 @@ export default function Home() {
       if (me) {
         setStoredUser(me)
         setUser(me)
-        // Arm the session-expired handler ONLY after we've confirmed a valid
-        // session. Before this, 401s are a normal "not signed in" state.
         armSessionHandler()
       } else {
         setStoredUser(null)

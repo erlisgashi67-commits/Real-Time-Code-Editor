@@ -30,22 +30,18 @@ export function setStoredUser(u: ClientUser | null) {
 // ---------------------------------------------------------------------------
 // Session-expiry handling
 //
-// When any authenticated API call returns 401, we want to:
-//   1. Clear the stale user state (so the auth gate re-appears).
-//   2. Show ONE clear toast: "Your session has expired."
-//
-// But we must NOT fire during the initial page load / rehydration — a 401
-// there just means "no session yet" (the user hasn't signed in), which is a
-// normal state, not an expiry. So the handler is only "armed" AFTER the app
-// has confirmed a valid session via fetchMe().
+// When an authenticated API call returns 401, we silently clear the user so
+// the auth gate re-appears. We deliberately do NOT show a toast — the auth
+// gate itself communicates "you need to sign in", and a toast was causing
+// false-positive "session expired" messages during normal use. The handler is
+// only "armed" AFTER fetchMe() confirms a valid session, so 401s during
+// initial load (no session yet) are silently ignored.
 // ---------------------------------------------------------------------------
 
 let onSessionExpired: (() => void) | null = null
-/** Only true once the app has confirmed a valid session. Prevents the
- *  session-expired toast from firing during initial load / sign-in. */
+/** Only true once the app has confirmed a valid session. Prevents clearing
+ *  the user during initial load when there's simply no session yet. */
 let handlerArmed = false
-/** Once fired, stays true until the user re-authenticates (armSessionHandler). */
-let sessionExpiredFired = false
 
 export function registerSessionExpiredHandler(handler: (() => void) | null) {
   onSessionExpired = handler
@@ -55,7 +51,6 @@ export function registerSessionExpiredHandler(handler: (() => void) | null) {
  *  valid user. Before this, 401s are silently treated as "not signed in". */
 export function armSessionHandler() {
   handlerArmed = true
-  sessionExpiredFired = false // reset for the new session
 }
 
 /** Disarm — call this when the user signs out or the session expires. */
@@ -63,23 +58,20 @@ export function disarmSessionHandler() {
   handlerArmed = false
 }
 
-function fireSessionExpired() {
-  // Only fire if the handler is armed (user was previously authenticated)
-  // and hasn't already fired for this session.
-  if (!handlerArmed || sessionExpiredFired) return
-  sessionExpiredFired = true
+function handleUnauthorized() {
+  // Silently clear the user — the auth gate will appear. No toast.
+  if (!handlerArmed) return
+  disarmSessionHandler()
   onSessionExpired?.()
 }
 
 /**
  * Thrown by `api()` on a 401 response. Callers can check
- * `err instanceof SessionExpiredError` to suppress their own error toast —
- * the global session-expired handler already shows a single clear message and
- * returns the user to the auth gate.
+ * `err instanceof SessionExpiredError` to suppress their own error toast.
  */
 export class SessionExpiredError extends Error {
   constructor() {
-    super('Your session has expired')
+    super('Session expired')
     this.name = 'SessionExpiredError'
   }
 }
@@ -107,10 +99,8 @@ export async function api<T = unknown>(
   const data = text ? JSON.parse(text) : null
   if (!res.ok) {
     if (res.status === 401) {
-      // If the handler is armed (user was authenticated), this is a real
-      // session expiry — fire the global handler. If not armed, this is just
-      // a "not signed in" state during initial load — stay quiet.
-      fireSessionExpired()
+      // Silently handle — clears user if armed, does nothing if not armed.
+      handleUnauthorized()
       throw new SessionExpiredError()
     }
     const msg = (data && (data.error || data.message)) || `Request failed (${res.status})`
@@ -133,7 +123,7 @@ export const apiDel = <T = unknown>(path: string) => api<T>(path, { method: 'DEL
  *
  * Uses a RAW fetch (not `api()`) so it NEVER triggers the session-expired
  * handler — a missing/invalid session during initial load is a normal "not
- * signed in" state, not an expiry. Returns null if there's no valid session.
+ * signed in" state. Returns null if there's no valid session.
  */
 export async function fetchMe(): Promise<ClientUser | null> {
   try {
