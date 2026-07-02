@@ -6,10 +6,6 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  eslint: {
-    // Production builds MUST fail on lint errors.
-    ignoreDuringBuilds: false,
-  },
   reactStrictMode: true,
 };
 

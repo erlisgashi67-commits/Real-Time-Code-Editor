@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useCallback } from 'react'
 import Editor, { type OnMount, type BeforeMount } from '@monaco-editor/react'
-import type { editor as MEditor, IDisposable, IContentWidget } from 'monaco-editor'
+import type { editor as MEditor, IDisposable } from 'monaco-editor'
 import type { RemoteCursor } from './use-collab'
 
 const LANG_BY_EXT: Record<string, string> = {
@@ -45,7 +45,7 @@ export function CodeEditor({
   const editorRef = useRef<MEditor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null)
   const decorationsRef = useRef<string[]>([])
-  const widgetsRef = useRef<Map<string, { id: string; el: HTMLDivElement & { __widget?: IContentWidget } }>>(new Map())
+  const widgetsRef = useRef<Map<string, { id: string; el: HTMLDivElement & { __widget?: MEditor.IContentWidget } }>>(new Map())
   const gutterSubRef = useRef<IDisposable | null>(null)
   const cursorSubRef = useRef<IDisposable | null>(null)
   const modelChangeRef = useRef(false)
@@ -71,7 +71,7 @@ export function CodeEditor({
       domNode.style.backgroundColor = c.color
       domNode.textContent = c.name
 
-      const widget: IContentWidget = {
+      const widget: MEditor.IContentWidget = {
         getId: () => `remote-flag-${key}`,
         getDomNode: () => domNode,
         getPosition: () => ({
@@ -85,7 +85,7 @@ export function CodeEditor({
       } else {
         editor.layoutContentWidget(widget)
       }
-      domNode.__widget = widget
+      ;(domNode as HTMLDivElement & { __widget?: MEditor.IContentWidget }).__widget = widget
     })
     widgetsRef.current.forEach((entry, key) => {
       if (!active.has(key)) {

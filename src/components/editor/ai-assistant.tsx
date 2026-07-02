@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Markdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
@@ -81,7 +81,7 @@ export function AIAssistant({
   projectId,
   activeFile,
   allFiles,
-}: AIAssistantProps): JSX.Element {
+}: AIAssistantProps): ReactElement {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -301,7 +301,7 @@ export function AIAssistant({
   )
 }
 
-function MessageBubble({ message }: { message: ChatMessage }): JSX.Element {
+function MessageBubble({ message }: { message: ChatMessage }): ReactElement {
   const isUser = message.role === 'user'
   return (
     <div className={cn('flex items-start gap-2', isUser && 'flex-row-reverse')}>

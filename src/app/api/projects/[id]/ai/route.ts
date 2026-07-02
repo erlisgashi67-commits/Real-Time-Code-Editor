@@ -10,7 +10,7 @@ export const maxDuration = 30
 /**
  * AI pair-programming assistant endpoint.
  *
- * Accepts the auth.user's chat message plus optional context about the file they're
+ * Accepts the user's chat message plus optional context about the file they're
  * currently editing and the project file list. Calls the Z AI LLM with a system
  * prompt that positions it as a CodeSync-embedded pair programmer, then returns
  * the assistant's reply as JSON.
@@ -39,7 +39,7 @@ type Ctx = { params: Promise<{ id: string }> }
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params
 
-  // 1) Auth — require a signed-in auth.user.
+  // 1) Auth — require a signed-in user.
   const auth = await requireUser(req)
   if (!auth.ok) return auth.error
 
@@ -54,20 +54,20 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if ('error' in parsed) return parsed.error
   const { message, activeFile, allFiles } = parsed.data
 
-  // 4) Build the LLM message array: system context + optional file context + auth.user message.
+  // 4) Build the LLM message array: system context + optional file context + user message.
   const systemPrompt =
     `You are CodeSync AI, a pair-programming assistant embedded in a collaborative code editor. ` +
     `You help explain code, suggest improvements, debug issues, and refactor. ` +
     `Be concise and practical. When suggesting code, use markdown code fences. ` +
-    `The auth.user is currently editing: ${activeFile?.path ?? 'no file'}`
+    `The user is currently editing: ${activeFile?.path ?? 'no file'}`
 
-  const messages: { role: 'system' | 'auth.user' | 'assistant'; content: string }[] = [
+  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
     { role: 'system', content: systemPrompt },
   ]
 
   if (activeFile) {
     messages.push({
-      role: 'auth.user',
+      role: 'user',
       content:
         `Here is the current file content (\`${activeFile.path}\`):\n` +
         '```\n' +
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   if (allFiles && allFiles.length > 0) {
     messages.push({
-      role: 'auth.user',
+      role: 'user',
       content: `Other files in the project: ${allFiles.map((f) => f.path).join(', ')}`,
     })
     messages.push({
@@ -93,8 +93,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     })
   }
 
-  // The actual auth.user question / instruction goes last.
-  messages.push({ role: 'auth.user', content: message })
+  // The actual user question / instruction goes last.
+  messages.push({ role: 'user', content: message })
 
   // 5) Call the LLM. Disable extended thinking for snappy responses.
   try {
