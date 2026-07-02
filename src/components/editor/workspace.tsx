@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArrowLeft, Share2, GitCommitHorizontal, Play, X, FileCode, Wifi, WifiOff, Circle, Save, Sparkles, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { apiGet, apiPost, apiPut, apiPatch, apiDel } from '@/lib/api'
+import { apiGet, apiPost, apiPut, apiPatch, apiDel, isSessionExpiredError } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { useCollab, type RemoteCursor } from './use-collab'
 import { FileTree } from './file-tree'
@@ -109,7 +109,11 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
         loadVersions(entry.path)
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load project')
+      // Session-expiry is handled globally (clears user + shows a single toast);
+      // don't show a redundant per-call error here.
+      if (!isSessionExpiredError(err)) {
+        toast.error(err instanceof Error ? err.message : 'Failed to load project')
+      }
       onBack()
     }
   }, [projectId, loadVersions, onBack])

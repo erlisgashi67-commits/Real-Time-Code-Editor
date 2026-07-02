@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Plus, FileCode, Globe, Terminal, Atom, FileText, Users, Clock, LogOut, Sparkles } from 'lucide-react'
-import { apiGet, apiPost, signOut as doSignOut } from '@/lib/api'
+import { apiGet, apiPost, signOut as doSignOut, isSessionExpiredError } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { TEMPLATES } from '@/lib/templates'
 import { toast } from 'sonner'
@@ -46,7 +46,10 @@ export function Dashboard() {
       const data = await apiGet<ProjectSummary[]>('/api/projects')
       setProjects(data)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load projects')
+      // Session-expiry is handled globally (clears user + shows a single toast).
+      if (!isSessionExpiredError(err)) {
+        toast.error(err instanceof Error ? err.message : 'Failed to load projects')
+      }
     } finally {
       setLoading(false)
     }
