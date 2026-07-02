@@ -22,12 +22,21 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
  * provided via the CODESYNC_SESSION_SECRET env var — if it's missing, we fail
  * closed (throw) rather than falling back to a predictable hardcoded secret.
  * In development, a fixed fallback is used so the dev server "just works".
+ *
+ * IMPORTANT: resolution is LAZY (deferred to first sign/verify call). This is
+ * intentional — `next build` imports route modules (and thus this file) to
+ * collect page data with NODE_ENV=production, but no cookies are signed during
+ * a build. Throwing at module-load time would crash the build; throwing at
+ * request time correctly fails closed only when a real request needs the secret.
  */
-const SECRET = resolveSessionSecret()
-
-function resolveSessionSecret(): string {
+let _secret: string | null = null
+function getSecret(): string {
+  if (_secret !== null) return _secret
   const env = process.env.CODESYNC_SESSION_SECRET
-  if (env && env.length >= 32) return env
+  if (env && env.length >= 32) {
+    _secret = env
+    return _secret
+  }
   if (process.env.NODE_ENV === 'production') {
     // Fail closed: never run production with a predictable secret.
     throw new Error(
@@ -36,7 +45,8 @@ function resolveSessionSecret(): string {
     )
   }
   // Dev-only fallback — predictable but never used in production.
-  return 'codesync-dev-session-secret-rotate-me'
+  _secret = 'codesync-dev-session-secret-rotate-me'
+  return _secret
 }
 
 const AVATAR_COLORS = ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4']
@@ -46,7 +56,7 @@ export function randomColor(): string {
 }
 
 function sign(payload: string): string {
-  return createHmac('sha256', SECRET).update(payload).digest('hex')
+  return createHmac('sha256', getSecret()).update(payload).digest('hex')
 }
 
 function makeCookieValue(userId: string): string {
