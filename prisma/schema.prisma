@@ -113,8 +113,12 @@ model Collaborator {
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@unique([projectId, userName])
+  // A given user account can be a collaborator on a project at most once.
+  // (userId is nullable for pending email invites; SQLite treats NULLs as
+  // distinct so multiple pending invites don't collide.)
+  @@unique([projectId, userId])
   @@index([projectId])
+  @@index([userId])
 }
 
 model ShareLink {

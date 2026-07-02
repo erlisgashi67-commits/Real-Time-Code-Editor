@@ -8,16 +8,21 @@
  * Path is "/" (required by Caddy gateway forwarding).
  * Frontend connects with: io("/?XTransformPort=3003")
  *
- * P2 — Collaboration Correctness hardening:
- *   1. Server-side cursor throttling (~20 emits/sec/socket, drop excess).
+ * Collaboration correctness hardening (ALL IMPLEMENTED):
+ *   1. Server-side cursor throttling (~20 emits/sec/socket, drop excess)
+ *      — see CURSOR_MAX_PER_SECOND + cursorLastRelayAt map.
  *   2. Inactivity sweep (every 30s, force-disconnect sockets idle >90s;
- *      emits system "{name} went inactive and was disconnected" + presence-update).
+ *      emits system "{name} went inactive and was disconnected" + presence-update)
+ *      — see INACTIVITY_SWEEP_INTERVAL_MS + touchActivity().
  *   3. Session migration on join-project: stale (dead) entries for the same
- *      user.id are removed before registering the new socket.
+ *      user.id are removed before registering the new socket
+ *      — see the join-project handler's io.sockets.sockets.has() check.
  *   4. Duplicate-tab handling: if the existing socket for the same user.id is
- *      still alive, BOTH are kept (legitimate multi-tab), not deduped.
+ *      still alive, BOTH are kept (legitimate multi-tab), not deduped
+ *      — see "joined from an additional tab" log + kept-both path.
  *   5. Typing indicator auto-clear: a 3s safety-net timeout emits isTyping:false
- *      if the client stops emitting; cleared on file-edit / next typing event.
+ *      if the client stops emitting; cleared on file-edit / next typing event
+ *      — see TYPING_AUTO_CLEAR_MS + meta.typingTimeout.
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http'

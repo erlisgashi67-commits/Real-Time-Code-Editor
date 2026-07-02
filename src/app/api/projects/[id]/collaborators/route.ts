@@ -34,22 +34,47 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if ('error' in parsed) return parsed.error
   const { userName, email, permission: perm } = parsed.data
 
+  // Link to an existing user account by email (the stable identifier).
+  // The display `userName` is just for UI — access is always by userId.
   let linkedUser: { id: string } | null = null
   if (email) {
     linkedUser = await db.user.findUnique({ where: { email }, select: { id: true } })
   }
 
-  const collab = await db.collaborator.upsert({
-    where: { projectId_userName: { projectId: id, userName } },
-    update: { permission: perm, userId: linkedUser?.id || null },
-    create: {
-      projectId: id,
-      userName,
-      userId: linkedUser?.id || null,
-      permission: perm,
-    },
+  if (linkedUser) {
+    // Upsert by [projectId, userId] — the stable account ID.
+    const existing = await db.collaborator.findFirst({
+      where: { projectId: id, userId: linkedUser.id },
+    })
+    if (existing) {
+      const updated = await db.collaborator.update({
+        where: { id: existing.id },
+        data: { permission: perm, userName },
+      })
+      return json(updated, 201)
+    }
+    const created = await db.collaborator.create({
+      data: { projectId: id, userName, userId: linkedUser.id, permission: perm },
+    })
+    return json(created, 201)
+  }
+
+  // No linked user (pending email invite) — create a name-only record.
+  // userId stays null until the invitee signs up and claims a share link.
+  const existingPending = await db.collaborator.findFirst({
+    where: { projectId: id, userId: null, userName },
   })
-  return json(collab, 201)
+  if (existingPending) {
+    const updated = await db.collaborator.update({
+      where: { id: existingPending.id },
+      data: { permission: perm },
+    })
+    return json(updated, 201)
+  }
+  const created = await db.collaborator.create({
+    data: { projectId: id, userName, userId: null, permission: perm },
+  })
+  return json(created, 201)
 }
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
@@ -62,11 +87,8 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
 
   const url = new URL(req.url)
   const collabId = url.searchParams.get('id')
-  const userName = url.searchParams.get('userName')
   if (collabId) {
     await db.collaborator.deleteMany({ where: { id: collabId, projectId: id } })
-  } else if (userName) {
-    await db.collaborator.deleteMany({ where: { projectId: id, userName } })
   }
   return json({ ok: true })
 }

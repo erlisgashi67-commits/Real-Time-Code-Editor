@@ -10,7 +10,11 @@ export interface AccessResult {
   permission: Permission | null
 }
 
-/** Determine the permission level a user has on a project. */
+/** Determine the permission level a user has on a project.
+ *
+ * Access is granted ONLY by matching the authenticated user's stable `id`
+ * against `Collaborator.userId` — NEVER by display name. Two different
+ * accounts with the same name must NOT inherit each other's access. */
 export async function getAccess(
   projectId: string,
   user: ClientUser | null
@@ -22,10 +26,7 @@ export async function getAccess(
 
   if (user) {
     const collab = await db.collaborator.findFirst({
-      where: {
-        projectId,
-        OR: [{ userId: user.id }, { userName: user.name }],
-      },
+      where: { projectId, userId: user.id },
     })
     if (collab) return { project, permission: collab.permission as Permission }
   }

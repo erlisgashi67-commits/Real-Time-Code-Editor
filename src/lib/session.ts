@@ -16,8 +16,28 @@ export type { Permission } from '@/lib/types'
 
 export const SESSION_COOKIE = 'codesync_session'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
-// In production this MUST be set via env. The fallback is for local dev only.
-const SECRET = process.env.CODESYNC_SESSION_SECRET || 'codesync-dev-session-secret-rotate-me'
+
+/**
+ * The HMAC secret used to sign session cookies. In production this MUST be
+ * provided via the CODESYNC_SESSION_SECRET env var — if it's missing, we fail
+ * closed (throw) rather than falling back to a predictable hardcoded secret.
+ * In development, a fixed fallback is used so the dev server "just works".
+ */
+const SECRET = resolveSessionSecret()
+
+function resolveSessionSecret(): string {
+  const env = process.env.CODESYNC_SESSION_SECRET
+  if (env && env.length >= 32) return env
+  if (process.env.NODE_ENV === 'production') {
+    // Fail closed: never run production with a predictable secret.
+    throw new Error(
+      'CODESYNC_SESSION_SECRET must be set to a random string of at least 32 characters in production. ' +
+        'Refusing to start with an insecure session secret.'
+    )
+  }
+  // Dev-only fallback — predictable but never used in production.
+  return 'codesync-dev-session-secret-rotate-me'
+}
 
 const AVATAR_COLORS = ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4']
 

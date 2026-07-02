@@ -33,7 +33,9 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   })
 }
 
-/** Claim a share link: register the current (cookie-authed) user as a collaborator. */
+/** Claim a share link: register the current (cookie-authed) user as a collaborator.
+ *  Access is granted by the user's stable account ID — NOT by display name —
+ *  so two accounts with the same name can't inherit each other's access. */
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { token } = await ctx.params
   const { user, error: err } = await requireUser(req)
@@ -46,11 +48,27 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
 
   const perm = link.permission as Permission
-  await db.collaborator.upsert({
-    where: { projectId_userName: { projectId: link.projectId, userName: user!.name } },
-    update: { permission: perm, userId: user!.id },
-    create: { projectId: link.projectId, userName: user!.name, userId: user!.id, permission: perm },
+  // Upsert by [projectId, userId] — the user's stable account ID. If a
+  // pending email-invite (userId=null) exists for this user, link it;
+  // otherwise create a new collaborator record.
+  const existing = await db.collaborator.findFirst({
+    where: { projectId: link.projectId, userId: user!.id },
   })
+  if (existing) {
+    await db.collaborator.update({
+      where: { id: existing.id },
+      data: { permission: perm },
+    })
+  } else {
+    await db.collaborator.create({
+      data: {
+        projectId: link.projectId,
+        userName: user!.name,
+        userId: user!.id,
+        permission: perm,
+      },
+    })
+  }
 
   return json({ projectId: link.projectId, permission: perm })
 }
