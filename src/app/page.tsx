@@ -21,14 +21,24 @@ export default function Home() {
   const claimingRef = useRef(false)
   const didInitRef = useRef(false)
 
-  // Register a global 401 handler: if ANY API call returns 401 MID-SESSION
-  // (expired cookie, server restart, etc.), silently clear the user so the
-  // auth gate re-appears. No toast — the auth gate itself communicates
-  // "you need to sign in". Only armed AFTER a valid session is confirmed.
+  // Register a global 401 handler: if ANY API call returns 401 MID-SESSION,
+  // re-verify the session via fetchMe before clearing the user. This avoids
+  // false logouts from transient 401s during HMR / dev-server recompiles.
   useEffect(() => {
-    registerSessionExpiredHandler(() => {
-      setStoredUser(null)
-      setUser(null)
+    registerSessionExpiredHandler(async () => {
+      disarmSessionHandler()
+      const me = await fetchMe()
+      if (me) {
+        // Session is actually still valid — the 401 was transient. Re-arm.
+        setStoredUser(me)
+        setUser(me)
+        armSessionHandler()
+      } else if (me === null) {
+        // Confirmed: session is gone. Clear and show auth gate.
+        setStoredUser(null)
+        setUser(null)
+      }
+      // If me === undefined (network error), keep current user — don't logout.
       setReady(true)
     })
     return () => {
@@ -44,13 +54,18 @@ export default function Home() {
     fetchMe().then((me) => {
       if (cancelled) return
       if (me) {
+        // Valid session confirmed.
         setStoredUser(me)
         setUser(me)
         armSessionHandler()
-      } else {
+      } else if (me === null) {
+        // Definitively no session — clear any stale cache.
         setStoredUser(null)
         setUser(null)
       }
+      // If `me === undefined`, the check FAILED (network error / HMR / server
+      // compiling). DON'T clear the user — this prevents transient dev-server
+      // blips from logging the user out.
       setReady(true)
     })
     return () => {

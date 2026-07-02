@@ -58,11 +58,24 @@ export function disarmSessionHandler() {
   handlerArmed = false
 }
 
+// Debounce: multiple simultaneous 401s (e.g. dashboard + chat + comments all
+// failing at once) should only trigger ONE re-check, not N.
+let unauthorizedCheckInProgress = false
 function handleUnauthorized() {
-  // Silently clear the user — the auth gate will appear. No toast.
   if (!handlerArmed) return
+  if (unauthorizedCheckInProgress) return
+  unauthorizedCheckInProgress = true
   disarmSessionHandler()
-  onSessionExpired?.()
+  // Fire the handler (which re-checks the session via fetchMe).
+  const result = onSessionExpired?.()
+  if (result && typeof (result as Promise<void>).then === 'function') {
+    ;(result as Promise<void>).finally(() => {
+      unauthorizedCheckInProgress = false
+    })
+  } else {
+    // Synchronous handler — reset after a short delay.
+    setTimeout(() => { unauthorizedCheckInProgress = false }, 1000)
+  }
 }
 
 /**
@@ -122,17 +135,23 @@ export const apiDel = <T = unknown>(path: string) => api<T>(path, { method: 'DEL
  * Re-hydrate the current user from the signed session cookie.
  *
  * Uses a RAW fetch (not `api()`) so it NEVER triggers the session-expired
- * handler — a missing/invalid session during initial load is a normal "not
- * signed in" state. Returns null if there's no valid session.
+ * handler. Returns:
+ *   - `ClientUser` if there's a valid session.
+ *   - `null` if there's definitively NO session (200 with null user, or 401).
+ *   - `undefined` if the check FAILED (network error, server compiling during
+ *     HMR, etc.) — callers should NOT clear the user in this case, to avoid
+ *     logging the user out during transient dev-server blips.
  */
-export async function fetchMe(): Promise<ClientUser | null> {
+export async function fetchMe(): Promise<ClientUser | null | undefined> {
   try {
     const res = await fetch('/api/auth/me', { credentials: 'include' })
-    if (!res.ok) return null
+    if (res.status === 401) return null // definitively no session
+    if (!res.ok) return undefined // server error — unknown state
     const data = (await res.json()) as { user: ClientUser | null }
     return data.user
   } catch {
-    return null
+    // Network error (server restarting, HMR, offline) — don't log the user out.
+    return undefined
   }
 }
 
