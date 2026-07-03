@@ -6,6 +6,22 @@ Built with **Next.js 16**, **TypeScript** (strict), **Socket.io**, **Monaco Edit
 
 ---
 
+## 📸 Screenshots
+
+### Dark mode (default)
+
+| Sign-in | Dashboard | IDE Workspace |
+|:---:|:---:|:---:|
+| ![Auth Gate — Dark](public/screenshots/auth-gate-dark.png) | ![Dashboard — Dark](public/screenshots/dashboard-dark.png) | ![IDE — Dark](public/screenshots/ide-dark.png) |
+
+### Light mode
+
+| Sign-in | Dashboard | IDE Workspace |
+|:---:|:---:|:---:|
+| ![Auth Gate — Light](public/screenshots/auth-gate-light.png) | ![Dashboard — Light](public/screenshots/dashboard-light.png) | ![IDE — Light](public/screenshots/ide-light.png) |
+
+---
+
 ## ✨ Features
 
 ### Real-time collaboration
@@ -44,6 +60,13 @@ Built with **Next.js 16**, **TypeScript** (strict), **Socket.io**, **Monaco Edit
 - **Context-aware** — sends the active file's content and project file list
 - **Quick actions** — "Explain this file", "Find bugs", "Suggest improvements", "Refactor"
 - **Markdown rendering** with syntax-highlighted code blocks
+
+### Dark mode
+- **Three-way toggle** — Light / Dark / System (auto-detects OS preference)
+- **Emerald-accented dark theme** — custom dark palette with emerald primary, ring, and accent colors
+- **Persistent** — theme choice saved via `next-themes` (localStorage + cookie)
+- **No flash** — `suppressHydrationWarning` + `disableTransitionOnChange` for a seamless load
+- **IDE stays dark** — the Monaco editor workspace is always dark (like VS Code); the toggle controls the dashboard and auth gate
 
 ### Security
 - **Signed httpOnly session cookies** — HMAC-signed `userId` cookie; can't be forged or read by JS

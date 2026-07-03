@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Users, Zap, GitBranch, Terminal } from 'lucide-react'
 import { apiPost } from '@/lib/api'
 import { setStoredUser } from '@/lib/api'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { useApp } from '@/lib/store'
 import { toast } from 'sonner'
 
@@ -82,7 +83,10 @@ export function AuthGate() {
       </div>
 
       {/* Right: sign-in */}
-      <div className="flex items-center justify-center p-6">
+      <div className="flex items-center justify-center p-6 relative">
+        <div className="absolute top-4 right-4">
+          <ThemeToggle />
+        </div>
         <Card className="w-full max-w-md border-2 shadow-lg">
           <CardHeader className="space-y-2 text-center">
             <div className="lg:hidden mx-auto size-12 rounded-xl bg-emerald-500 grid place-items-center text-emerald-950 font-black text-xl">{'</>'}</div>

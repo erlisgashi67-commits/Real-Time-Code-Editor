@@ -21,6 +21,7 @@ import { ShareDialog } from './share-dialog'
 import { CommandPalette, type CommandItem } from './command-palette'
 import { useShortcuts } from './use-shortcuts'
 import { AIAssistant } from './ai-assistant'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { toast } from 'sonner'
 import type { ChatRecord, CommentRecord, VersionRecord, FileNode } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -512,6 +513,8 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
             {collab.connected ? <Wifi className="size-3.5 text-emerald-500" /> : <WifiOff className="size-3.5 text-amber-500" />}
             <span className="hidden md:inline">{collab.connected ? 'Live' : 'Reconnecting…'}</span>
           </div>
+
+          <ThemeToggle />
 
           <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white h-8" onClick={() => setRunSignal((s) => s + 1)} title="Run (⌘↵)">
             <Play className="size-3.5 mr-1" /> Run

@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Plus, FileCode, Globe, Terminal, Atom, FileText, Users, Clock, LogOut, Sparkles } from 'lucide-react'
 import { apiGet, apiPost, signOut as doSignOut, isSessionExpiredError } from '@/lib/api'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { useApp } from '@/lib/store'
 import { TEMPLATES } from '@/lib/templates'
 import { toast } from 'sonner'
@@ -75,6 +76,7 @@ export function Dashboard() {
             <Badge variant="secondary" className="ml-2 hidden sm:inline-flex">collaborative</Badge>
           </div>
           <div className="flex items-center gap-3">
+            <ThemeToggle />
             <div className="hidden sm:flex items-center gap-2 text-sm">
               <Avatar className="size-8 border" style={{ backgroundColor: user?.color || '#10b981' }}>
                 <AvatarFallback className="text-white text-xs font-semibold">
