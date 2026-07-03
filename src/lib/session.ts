@@ -35,7 +35,7 @@ function getSecret(): string {
   const env = process.env.CODESYNC_SESSION_SECRET
   if (env && env.length >= 32) {
     _secret = env
-    return _secret
+    return env // return the local (narrowed to string), not _secret
   }
   if (process.env.NODE_ENV === 'production') {
     // Fail closed: never run production with a predictable secret.
@@ -45,8 +45,9 @@ function getSecret(): string {
     )
   }
   // Dev-only fallback — predictable but never used in production.
-  _secret = 'codesync-dev-session-secret-rotate-me'
-  return _secret
+  const devSecret = 'codesync-dev-session-secret-rotate-me'
+  _secret = devSecret
+  return devSecret
 }
 
 const AVATAR_COLORS = ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4']

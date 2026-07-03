@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent, type ComponentType, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -30,7 +30,7 @@ interface ProjectSummary {
   updatedAt: string
 }
 
-const TEMPLATE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+const TEMPLATE_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   FileCode, Globe, Terminal, Atom, FileText,
 }
 
@@ -198,7 +198,7 @@ function CreateProjectDialog({
   onOpenChange,
   onCreated,
 }: {
-  children: React.ReactNode
+  children: ReactNode
   open?: boolean
   onOpenChange?: (v: boolean) => void
   onCreated: (id: string) => void
@@ -212,7 +212,7 @@ function CreateProjectDialog({
   const isOpen = open !== undefined ? open : internalOpen
   const setOpen = onOpenChange || setInternalOpen
 
-  async function handleCreate(e: React.FormEvent) {
+  async function handleCreate(e: FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
     setLoading(true)

@@ -155,21 +155,14 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
         }
         return { ...c, [d.filePath]: { ...existing, content: d.content, lastSynced: d.content } }
       })
-      setFiles((fl) => fl.map((f) => (f.path === d.filePath ? f : f))) // touch
     },
     onCursor: (c) => {
+      const receivedAt = Date.now()
       setRemoteCursors((m) => {
         const next = new Map(m)
-        next.set(c.userId, c)
+        next.set(c.userId, { ...c, receivedAt })
         return next
       })
-      // auto-clear after a few seconds of inactivity
-      setTimeout(() => {
-        setRemoteCursors((m) => {
-          if (m.get(c.userId)?.position.lineNumber !== c.position.lineNumber) return m
-          return m
-        })
-      }, 5000)
     },
     onChat: (m) =>
       // Dedupe by id: the server relays chat back to the sender too, and the
@@ -187,18 +180,46 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
     },
   })
 
-  // clean stale remote cursors periodically
+  // Periodically expire remote cursors that haven't been updated in 5s —
+  // prevents stale cursor markers lingering after a user disconnects or stops
+  // emitting. Each cursor entry carries a `receivedAt` timestamp (set in
+  // onCursor); entries older than the threshold are deleted from the map.
   useEffect(() => {
+    const CURSOR_TTL_MS = 5000
     const t = setInterval(() => {
+      const now = Date.now()
       setRemoteCursors((m) => {
         if (m.size === 0) return m
-        return m
+        let changed = false
+        const next = new Map(m)
+        for (const [key, cursor] of next) {
+          const age = now - (cursor.receivedAt ?? 0)
+          if (age > CURSOR_TTL_MS) {
+            next.delete(key)
+            changed = true
+          }
+        }
+        return changed ? next : m
       })
-    }, 6000)
+    }, 2000)
     return () => clearInterval(t)
   }, [])
 
   // ---- editing ----
+
+  /** Persist a single file's content to the server. Extracted so both the
+   *  debounced auto-save and the beforeunload flush can call it. */
+  const persistFile = useCallback(async (path: string) => {
+    const file = contentsRef.current[path]
+    if (!file || !file.dirty) return
+    try {
+      await apiPut(`/api/projects/${projectId}/files/${file.id}`, { content: file.content })
+      setContents((c) => (c[path] ? { ...c, [path]: { ...c[path], dirty: false, lastSynced: file.content } } : c))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Auto-save failed')
+    }
+  }, [projectId])
+
   const handleCodeChange = useCallback((path: string, value: string) => {
     setContents((c) => {
       const existing = c[path]
@@ -213,21 +234,47 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
     saveTimers.current[path] = setTimeout(async () => {
       setSaving(true)
       try {
-        const file = contentsRef.current[path]
-        if (!file) return
-        await apiPut(`/api/projects/${projectId}/files/${file.id}`, { content: value })
-        setContents((c) => (c[path] ? { ...c, [path]: { ...c[path], dirty: false, lastSynced: value } } : c))
+        await persistFile(path)
         collab.sendTyping(path, false)
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Auto-save failed')
       } finally {
         setSaving(false)
       }
     }, 700)
-  }, [collab, projectId])
+  }, [collab, persistFile])
 
   const contentsRef = useRef(contents)
   contentsRef.current = contents
+
+  // Flush pending (debounced) saves when the tab is closed / navigated away.
+  // Without this, the latest edits can be lost if the tab closes before the
+  // 700ms debounce timer fires. Uses sendBeacon-style fetch with keepalive so
+  // the request survives the page unload.
+  useEffect(() => {
+    const flushAll = () => {
+      const pending = Object.keys(contentsRef.current).filter(
+        (p) => contentsRef.current[p]?.dirty
+      )
+      for (const path of pending) {
+        const file = contentsRef.current[path]
+        if (!file) continue
+        // keepalive lets the request outlive the page
+        fetch(`/api/projects/${projectId}/files/${file.id}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: file.content }),
+          credentials: 'include',
+          keepalive: true,
+        }).catch(() => {})
+      }
+    }
+    const handler = () => flushAll()
+    window.addEventListener('beforeunload', handler)
+    window.addEventListener('pagehide', handler)
+    return () => {
+      window.removeEventListener('beforeunload', handler)
+      window.removeEventListener('pagehide', handler)
+    }
+  }, [projectId])
 
   const cursorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleCursorChange = useCallback((path: string, pos: { lineNumber: number; column: number }, sel: { startLineNumber: number; endLineNumber: number } | null) => {

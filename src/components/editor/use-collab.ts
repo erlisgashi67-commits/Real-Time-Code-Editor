@@ -11,6 +11,9 @@ export interface RemoteCursor {
   filePath: string
   position: { lineNumber: number; column: number }
   selection: { startLineNumber: number; endLineNumber: number } | null
+  /** Client-side timestamp (ms) of the last cursor update — used to expire
+   *  stale cursors so disconnected users' markers don't linger. */
+  receivedAt?: number
 }
 
 export interface CollabHandlers {
@@ -41,34 +44,54 @@ export function useCollab(projectId: string | null, user: ClientUser | null, han
 
   useEffect(() => {
     if (!projectId || !userId || !userName || !userColor) return
-    const socket = io('/?XTransformPort=3003', {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 8,
-      reconnectionDelay: 1200,
-    })
-    socketRef.current = socket
+    let cancelled = false
+    let socket: ReturnType<typeof io> | null = null
 
-    const onConnect = () => {
-      setConnected(true)
-      socket.emit('join-project', {
-        projectId,
-        user: { id: userId, name: userName, color: userColor },
+    // Fetch a short-lived signed token from the server (requires a valid
+    // session cookie). The collab service verifies this token in the socket.io
+    // handshake — without it, the connection is rejected. This prevents
+    // unauthenticated users from joining project rooms or impersonating others.
+    fetch('/api/collab/token', { method: 'POST', credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { token?: string } | null) => {
+        if (cancelled || !data?.token) return
+        socket = io('/?XTransformPort=3003', {
+          transports: ['websocket', 'polling'],
+          reconnection: true,
+          reconnectionAttempts: 8,
+          reconnectionDelay: 1200,
+          auth: { token: data.token }, // verified by the collab service
+        })
+        socketRef.current = socket
+
+        const onConnect = () => {
+          setConnected(true)
+          socket!.emit('join-project', {
+            projectId,
+            user: { id: userId, name: userName, color: userColor },
+          })
+        }
+        socket.on('connect', onConnect)
+        socket.on('disconnect', () => setConnected(false))
+        socket.on('connect_error', () => setConnected(false))
+        socket.on('presence-update', (d: { users: PresenceUser[] }) => setOnline(d.users))
+        socket.on('file-edit', (d: Parameters<NonNullable<CollabHandlers['onFileEdit']>>[0]) => handlersRef.current.onFileEdit?.(d))
+        socket.on('cursor', (c: RemoteCursor) => handlersRef.current.onCursor?.(c))
+        socket.on('chat-message', (m: Parameters<NonNullable<CollabHandlers['onChat']>>[0]) => handlersRef.current.onChat?.(m))
+        socket.on('comment-added', (d: Parameters<NonNullable<CollabHandlers['onComment']>>[0]) => handlersRef.current.onComment?.(d))
+        socket.on('comment-resolved', (d: Parameters<NonNullable<CollabHandlers['onCommentResolved']>>[0]) => handlersRef.current.onCommentResolved?.(d))
+        socket.on('typing', (d: Parameters<NonNullable<CollabHandlers['onTyping']>>[0]) => handlersRef.current.onTyping?.(d))
       })
-    }
-    socket.on('connect', onConnect)
-    socket.on('disconnect', () => setConnected(false))
-    socket.on('presence-update', (d: { users: PresenceUser[] }) => setOnline(d.users))
-    socket.on('file-edit', (d: Parameters<NonNullable<CollabHandlers['onFileEdit']>>[0]) => handlersRef.current.onFileEdit?.(d))
-    socket.on('cursor', (c: RemoteCursor) => handlersRef.current.onCursor?.(c))
-    socket.on('chat-message', (m: Parameters<NonNullable<CollabHandlers['onChat']>>[0]) => handlersRef.current.onChat?.(m))
-    socket.on('comment-added', (d: Parameters<NonNullable<CollabHandlers['onComment']>>[0]) => handlersRef.current.onComment?.(d))
-    socket.on('comment-resolved', (d: Parameters<NonNullable<CollabHandlers['onCommentResolved']>>[0]) => handlersRef.current.onCommentResolved?.(d))
-    socket.on('typing', (d: Parameters<NonNullable<CollabHandlers['onTyping']>>[0]) => handlersRef.current.onTyping?.(d))
+      .catch(() => {
+        // Token fetch failed (network error / not authenticated) — don't connect.
+      })
 
     return () => {
-      socket.emit('leave-project', { projectId })
-      socket.disconnect()
+      cancelled = true
+      if (socket) {
+        socket.emit('leave-project', { projectId })
+        socket.disconnect()
+      }
       socketRef.current = null
       setConnected(false)
       setOnline([])

@@ -27,6 +27,7 @@
 
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { Server, Socket } from 'socket.io'
+import { createHmac, timingSafeEqual } from 'crypto'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -295,11 +296,68 @@ setInterval(() => {
 }, INACTIVITY_SWEEP_INTERVAL_MS).unref()
 
 // ---------------------------------------------------------------------------
+// Auth: every socket connection MUST present a valid signed token in the
+// `auth.token` handshake field. The token is minted by the Next.js API route
+// /api/collab/token (which requires a valid session cookie) and is verified
+// here using the shared CODESYNC_SESSION_SECRET. This prevents anyone who can
+// reach the socket port from impersonating another user or joining project
+// rooms without authentication.
+// ---------------------------------------------------------------------------
+
+const SESSION_SECRET = process.env.CODESYNC_SESSION_SECRET
+const TOKEN_TTL_SECONDS = 300 // 5 minutes (must match the API route)
+
+/** Verify a collab handshake token. Returns the userId on success, null otherwise. */
+function verifyCollabToken(token: unknown): string | null {
+  if (typeof token !== 'string' || !token) return null
+  if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
+    console.error('[collab] CODESYNC_SESSION_SECRET not configured — rejecting all connections')
+    return null
+  }
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  const [userId, expStr, sig] = parts
+  if (!userId || !expStr || !sig) return null
+  const exp = Number(expStr)
+  if (!Number.isFinite(exp) || exp <= 0) return null
+  // Check expiry (allow a small clock-skew grace)
+  const now = Math.floor(Date.now() / 1000)
+  if (now > exp + 30) return null
+  // Verify HMAC signature (constant-time compare)
+  const expected = createHmac('sha256', SESSION_SECRET).update(`${userId}:${exp}`).digest('hex')
+  try {
+    const a = Buffer.from(sig, 'hex')
+    const b = Buffer.from(expected, 'hex')
+    if (a.length !== b.length) return null
+    return timingSafeEqual(a, b) ? userId : null
+  } catch {
+    return null
+  }
+}
+
+// Connection middleware: reject any socket that doesn't present a valid token.
+io.use((socket: Socket, next) => {
+  const auth = socket.handshake.auth as { token?: unknown }
+  const userId = verifyCollabToken(auth?.token)
+  if (!userId) {
+    console.warn(`[collab] rejected unauthenticated socket: ${socket.id}`)
+    next(new Error('unauthorized'))
+    return
+  }
+  // Stash the verified userId on the socket. The client still sends name/color
+  // in the join-project payload (for display), but the userId is now trusted
+  // from the token — a client cannot claim to be a different user.
+  ;(socket.data as { userId: string }).userId = userId
+  next()
+})
+
+// ---------------------------------------------------------------------------
 // Connection lifecycle
 // ---------------------------------------------------------------------------
 
 io.on('connection', (socket: Socket) => {
-  console.log(`[collab] socket connected: ${socket.id}`)
+  const verifiedUserId = (socket.data as { userId: string }).userId
+  console.log(`[collab] socket connected: ${socket.id} (user=${verifiedUserId})`)
 
   // Initialize per-socket metadata
   socketMeta.set(socket.id, {
@@ -322,6 +380,19 @@ io.on('connection', (socket: Socket) => {
           return
         }
         const { projectId, user } = payload
+
+        // SECURITY: enforce that the client's claimed user.id matches the
+        // userId verified from the handshake token. A client cannot join as a
+        // different user — the name/color are display-only.
+        if (user.id !== verifiedUserId) {
+          console.warn(
+            `[collab] ${socket.id} tried to join as ${user.id} but token verified as ${verifiedUserId} — rejecting`
+          )
+          socket.emit('error', { message: 'identity mismatch' })
+          socket.disconnect(true)
+          return
+        }
+
         const room = roomFor(projectId)
 
         // Track socket metadata

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement, type FormEvent, type ComponentType } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Markdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
@@ -38,7 +38,7 @@ interface ChatMessage {
 
 interface QuickAction {
   label: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: ComponentType<{ className?: string }>
   prompt: string
 }
 
@@ -134,7 +134,7 @@ export function AIAssistant({
     [projectId, activeFile, allFiles, loading]
   )
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
     void sendMessage(input)
   }
