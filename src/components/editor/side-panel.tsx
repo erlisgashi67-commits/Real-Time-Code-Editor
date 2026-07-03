@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type ComponentRef } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -68,7 +68,7 @@ export function SidePanel(props: Props) {
 
 function ChatTab({ user, messages, onSendChat }: Props) {
   const [text, setText] = useState('')
-  const scrollRef = useRef<React.ComponentRef<typeof ScrollArea>>(null)
+  const scrollRef = useRef<ComponentRef<typeof ScrollArea>>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })

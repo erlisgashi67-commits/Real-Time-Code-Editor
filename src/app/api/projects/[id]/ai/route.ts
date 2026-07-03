@@ -49,7 +49,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (!canRead(permission)) return error(403, 'No access')
 
   // 3) Parse + validate the request body.
-  const body = await req.json().catch(() => ({}))
+  const body: unknown = await req.json().catch(() => ({}))
   const parsed = validate(aiBodySchema, body)
   if ('error' in parsed) return parsed.error
   const { message, activeFile, allFiles } = parsed.data

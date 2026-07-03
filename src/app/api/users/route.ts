@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 /** Sign in / register: create-or-get a user by email, then set a signed
  *  httpOnly session cookie. The client never sees or controls the cookie. */
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}))
+  const body: unknown = await req.json().catch(() => ({}))
   const parsed = signInSchema.safeParse(body)
   if (!parsed.success) {
     return error(400, parsed.error.issues.map((i) => i.message).join('; '))

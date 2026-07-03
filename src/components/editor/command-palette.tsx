@@ -69,7 +69,9 @@ const GROUP_ORDER_FILE_MODE = ['File', 'Go', 'View', 'Run', 'Git', 'Share']
 const GROUP_ORDER_NORMAL = ['Go', 'View', 'Run', 'Git', 'Share', 'File']
 
 interface RenderedItem {
-  key: string
+  /** Unique identifier for this rendered item (used as the React key prop).
+   *  Named `id` — NOT `key` — to avoid confusion with the React reserved `key` prop. */
+  id: string
   group: string
   label: string
   icon?: IconType
@@ -94,7 +96,7 @@ export function CommandPalette({
     const fileItems: RenderedItem[] =
       onOpenFile && files.length > 0
         ? files.map((f) => ({
-            key: `file:${f.id}`,
+            id: `file:${f.id}`,
             group: 'File',
             label: f.path,
             icon: fileIconFor(f.path),
@@ -116,7 +118,7 @@ export function CommandPalette({
 
     for (const cmd of commands) {
       ensure(cmd.group).push({
-        key: cmd.id,
+        id: cmd.id,
         group: cmd.group,
         label: cmd.label,
         icon: cmd.icon,
@@ -179,8 +181,8 @@ export function CommandPalette({
                   const Icon = item.icon
                   return (
                     <CommandItem
-                      key={item.key}
-                      value={`${item.group} ${item.label} ${item.key}`}
+                      key={item.id}
+                      value={`${item.group} ${item.label} ${item.id}`}
                       onSelect={() => {
                         item.action()
                         close()

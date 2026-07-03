@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   const auth = await requireUser(req)
   if (!auth.ok) return auth.error
 
-  const body = await req.json().catch(() => ({}))
+  const body: unknown = await req.json().catch(() => ({}))
   const parsed = validate(createProjectSchema, body)
   if ('error' in parsed) return parsed.error
   const { name, description, templateId } = parsed.data

@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (!project) return error(404, 'Project not found')
   if (!isAdmin(permission)) return error(403, 'Only the owner can create share links')
 
-  const body = await req.json().catch(() => ({}))
+  const body: unknown = await req.json().catch(() => ({}))
   const parsed = validate(createShareLinkSchema, body)
   if ('error' in parsed) return parsed.error
   const { permission: linkPermission, expiresAt } = parsed.data
