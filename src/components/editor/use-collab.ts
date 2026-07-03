@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
-import type { ClientUser, PresenceUser } from '@/lib/types'
+import type { ClientUser, PresenceUser, CommentRecord, ChatRecord } from '@/lib/types'
 
 export interface RemoteCursor {
   userId: string
@@ -19,8 +19,8 @@ export interface RemoteCursor {
 export interface CollabHandlers {
   onFileEdit?: (d: { filePath: string; content: string; authorName: string; timestamp: string }) => void
   onCursor?: (c: RemoteCursor) => void
-  onChat?: (m: { id: string; authorName: string; content: string; createdAt: string; system: boolean }) => void
-  onComment?: (d: { comment: unknown }) => void
+  onChat?: (m: ChatRecord) => void
+  onComment?: (d: { comment: CommentRecord }) => void
   onCommentResolved?: (d: { commentId: string }) => void
   onTyping?: (d: { userId: string; name: string; color: string; filePath: string; isTyping: boolean }) => void
 }
@@ -122,7 +122,7 @@ export function useCollab(projectId: string | null, user: ClientUser | null, han
       })
       return clientId
     },
-    sendComment: (comment: unknown) =>
+    sendComment: (comment: CommentRecord) =>
       socketRef.current?.emit('comment-added', { projectId, comment }),
     sendCommentResolved: (commentId: string) =>
       socketRef.current?.emit('comment-resolved', { projectId, commentId }),

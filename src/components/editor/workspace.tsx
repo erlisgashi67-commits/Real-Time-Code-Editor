@@ -22,7 +22,7 @@ import { CommandPalette, type CommandItem } from './command-palette'
 import { useShortcuts } from './use-shortcuts'
 import { AIAssistant } from './ai-assistant'
 import { toast } from 'sonner'
-import type { ChatRecord, CommentRecord, VersionRecord, FileNode, PresenceUser } from '@/lib/types'
+import type { ChatRecord, CommentRecord, VersionRecord, FileNode } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 interface ProjectMeta {
@@ -169,7 +169,7 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
       // sender already added an optimistic copy with the same client-generated id.
       setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m])),
     onComment: (d) => {
-      const c = d.comment as CommentRecord
+      const c = d.comment
       setComments((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]))
     },
     onCommentResolved: (d) => {
@@ -624,7 +624,7 @@ export function Workspace({ projectId, onBack }: { projectId: string; onBack: ()
               comments={comments}
               versions={versions}
               collaborators={project.collaborators}
-              online={collab.online as PresenceUser[]}
+              online={collab.online}
               activeFilePath={activePath}
               activeLine={null}
               readOnly={readOnly}

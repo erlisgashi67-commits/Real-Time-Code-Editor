@@ -38,12 +38,16 @@ export function setStoredUser(u: ClientUser | null) {
 // initial load (no session yet) are silently ignored.
 // ---------------------------------------------------------------------------
 
-let onSessionExpired: (() => void) | null = null
+// The handler may be async (it re-checks the session via fetchMe). The union
+// return type lets handleUnauthorized() correctly await / .finally() it.
+type SessionExpiredHandler = () => void | Promise<void>
+
+let onSessionExpired: SessionExpiredHandler | null = null
 /** Only true once the app has confirmed a valid session. Prevents clearing
  *  the user during initial load when there's simply no session yet. */
 let handlerArmed = false
 
-export function registerSessionExpiredHandler(handler: (() => void) | null) {
+export function registerSessionExpiredHandler(handler: SessionExpiredHandler | null) {
   onSessionExpired = handler
 }
 
@@ -66,14 +70,15 @@ function handleUnauthorized() {
   if (unauthorizedCheckInProgress) return
   unauthorizedCheckInProgress = true
   disarmSessionHandler()
-  // Fire the handler (which re-checks the session via fetchMe).
+  // Fire the handler (which re-checks the session via fetchMe). It may be
+  // async — if so, reset the debounce flag when it settles; otherwise reset
+  // after a short delay.
   const result = onSessionExpired?.()
-  if (result && typeof (result as Promise<void>).then === 'function') {
-    ;(result as Promise<void>).finally(() => {
+  if (result instanceof Promise) {
+    result.finally(() => {
       unauthorizedCheckInProgress = false
     })
   } else {
-    // Synchronous handler — reset after a short delay.
     setTimeout(() => { unauthorizedCheckInProgress = false }, 1000)
   }
 }

@@ -198,7 +198,9 @@ function CreateProjectDialog({
   onOpenChange,
   onCreated,
 }: {
-  children: ReactNode
+  /** Optional trigger element. When provided, wraps it in a DialogTrigger.
+   *  When omitted, the dialog is controlled via `open`/`onOpenChange`. */
+  children?: ReactNode
   open?: boolean
   onOpenChange?: (v: boolean) => void
   onCreated: (id: string) => void
@@ -237,7 +239,7 @@ function CreateProjectDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
+      {children ? <DialogTrigger asChild>{children}</DialogTrigger> : null}
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Create a new project</DialogTitle>
